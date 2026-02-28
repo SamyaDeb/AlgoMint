@@ -915,6 +915,8 @@ export default function Home() {
               clearTeal={clearTeal}
               compilationResult={compilationResult}
               arc56Json={arc56Json}
+              peraWallet={peraWallet}
+              onLog={(type, message) => addLog(type, message)}
             />
           </div>
           {/* Side Panel Drag Handle */}

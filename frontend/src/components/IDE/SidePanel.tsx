@@ -4,6 +4,8 @@ import type { PanelId } from "./IconSidebar";
 import { FilePlus, FolderPlus, RefreshCw, Copy, Download, Eye, Check, ChevronDown, ChevronRight } from "lucide-react";
 import type { FileNode } from "@/app/page";
 import type { ARC32AppSpec, ARC4Method, DeployedContract, CompilationResult } from "@/types";
+import type { PeraWalletConnect } from "@perawallet/connect";
+import ContractInteraction from "@/components/Deploy/ContractInteraction";
 
 // ── Panel content for each sidebar icon ── //
 
@@ -50,6 +52,9 @@ interface SidePanelProps {
   clearTeal: string;
   compilationResult: CompilationResult | null;
   arc56Json: Record<string, unknown> | null;
+  // Contract interaction
+  peraWallet: PeraWalletConnect | null;
+  onLog?: (type: "info" | "error" | "success" | "warning", message: string) => void;
 }
 
 
@@ -227,7 +232,7 @@ function ConvertPanel({
         disabled={!solidityCode.trim() || isConverting}
         loading={isConverting}
       >
-        🔄 Convert to Algorand Python
+        Convert to Algorand Python
       </PanelButton>
 
       {/* Status */}
@@ -248,7 +253,7 @@ function ConvertPanel({
           {isConverting
             ? "Converting..."
             : isConverted
-              ? "Converted ✓"
+              ? "Converted"
               : convertError
                 ? "Failed ✗"
                 : "Ready"}
@@ -340,8 +345,8 @@ function CompilePanel({
         {isCompiling
           ? "Compiling..."
           : isCompiled
-            ? "Compiled Successfully ✅"
-            : "🔨 Compile Contract"}
+            ? "Compiled Successfully"
+            : "Compile Contract"}
       </PanelButton>
 
       <div className="text-base" style={{ color: "var(--text-muted)" }}>
@@ -379,9 +384,9 @@ function CompilePanel({
               ? `Retrying (${retryAttempt}/${maxRetries})...`
               : "Compiling..."
             : isCompiled
-              ? "Compiled ✓"
+              ? "Compiled"
               : compileError
-                ? "Compilation Failed ❌"
+                ? "Compilation Failed"
                 : "Ready"}
         </span>
       </div>
@@ -390,7 +395,6 @@ function CompilePanel({
       {isCompiled && compilationResult && (
         <div className="p-2.5 rounded" style={{ backgroundColor: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)" }}>
           <div className="flex items-center gap-2 mb-1.5">
-            <span style={{ color: "var(--success)" }}>✅</span>
             <span className="text-sm font-semibold" style={{ color: "var(--success)" }}>
               Contract compiled successfully
             </span>
@@ -659,6 +663,8 @@ function DeployPanel({
   clearTeal,
   compilationResult,
   arc56Json,
+  peraWallet,
+  onLog,
 }: {
   isWalletConnected: boolean;
   walletAddress: string | null;
@@ -679,6 +685,8 @@ function DeployPanel({
   clearTeal: string;
   compilationResult: CompilationResult | null;
   arc56Json: Record<string, unknown> | null;
+  peraWallet: PeraWalletConnect | null;
+  onLog?: (type: "info" | "error" | "success" | "warning", message: string) => void;
 }) {
   const truncatedAddr = walletAddress
     ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
@@ -792,7 +800,7 @@ ${methodLines}`;
         </div>
       ) : (
         <PanelButton onClick={onConnectWallet} variant="secondary">
-          🔗 Connect Pera Wallet
+          Connect Pera Wallet
         </PanelButton>
       )}
 
@@ -802,7 +810,7 @@ ${methodLines}`;
         disabled={!isCompiled || !isWalletConnected || isDeploying}
         loading={isDeploying}
       >
-        🚀 Deploy to {network === "testnet" ? "Testnet" : "Mainnet"} ▶
+        Deploy to {network === "testnet" ? "Testnet" : "Mainnet"} ▶
       </PanelButton>
 
       {/* Deploy stage */}
@@ -846,7 +854,7 @@ ${methodLines}`;
                   <div className="flex items-center gap-2">
                     {expandedContract === i ? <ChevronDown size={14} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />}
                     <span className="text-sm font-semibold" style={{ color: "var(--success)" }}>
-                      ✅ {dc.contractName || "Contract"}
+                      {dc.contractName || "Contract"}
                     </span>
                   </div>
                   <span className="text-xs px-1.5 py-0.5 rounded" style={{
@@ -937,15 +945,15 @@ ${methodLines}`;
                       </button>
                     </div>
 
-                    {/* Explorer link — primary: Application page */}
+                    {/* Explorer link — deployment transaction */}
                     <a
-                      href={dc.explorerUrl}
+                      href={`https://${dc.network === "mainnet" ? "" : "testnet."}explorer.perawallet.app/tx/${dc.txid}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="block text-xs underline"
                       style={{ color: "var(--accent)" }}
                     >
-                      View Application on Explorer →
+                      View Block Explorer →
                     </a>
 
                     {/* Downloads section */}
@@ -1017,6 +1025,19 @@ ${methodLines}`;
                         </pre>
                       </div>
                     </div>
+
+                    {/* ═══ CONTRACT INTERACTION ═══ */}
+                    {isWalletConnected && walletAddress && peraWallet && (
+                      <div className="mt-1.5 pt-1.5" style={{ borderTop: "1px solid var(--border)" }}>
+                        <ContractInteraction
+                          contract={dc}
+                          walletAddress={walletAddress}
+                          peraWallet={peraWallet}
+                          network={dc.network}
+                          onLog={onLog}
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1215,6 +1236,8 @@ export default function SidePanel(props: SidePanelProps) {
                 clearTeal={props.clearTeal}
                 compilationResult={props.compilationResult}
                 arc56Json={props.arc56Json}
+                peraWallet={props.peraWallet}
+                onLog={props.onLog}
               />
             )}
             {activePanel === "settings" && (
