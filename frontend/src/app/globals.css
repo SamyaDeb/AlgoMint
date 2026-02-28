@@ -1,0 +1,528 @@
+@import "tailwindcss";
+
+/* ── AlgoMint IDE — Algorand-Branded Dark Theme ── */
+/* Primary: #00D4AA (Algorand Teal Green)  •  Base: Pure Black */
+
+:root {
+  /* Backgrounds (darkest → lightest) — deep black palette */
+  --bg-icon-bar: #050505;
+  --bg-side-panel: #0a0a0a;
+  --bg-editor: #0d0d0d;
+  --bg-terminal: #030303;
+  --bg-status-bar: #050505;
+  --bg-tab-bar: #0a0a0a;
+  --bg-tab-active: #0d0d0d;
+  --bg-tab-hover: #151515;
+  --bg-surface: #111111;
+  --bg-input: #0a0a0a;
+  --bg-breadcrumb: #0a0a0a;
+
+  /* Accent / brand — Algorand Teal Green */
+  --accent: #00D4AA;
+  --accent-hover: #00F0C0;
+  --accent-muted: rgba(0, 212, 170, 0.10);
+  --accent-glow: rgba(0, 212, 170, 0.25);
+  --accent-dim: rgba(0, 212, 170, 0.06);
+
+  /* Semantic */
+  --success: #00D4AA;
+  --error: #FF4D6A;
+  --warning: #FFB020;
+  --info: #00D4AA;
+
+  /* Text */
+  --text-primary: #E8EFED;
+  --text-secondary: #8A9A96;
+  --text-muted: #4A5A56;
+  --text-accent: var(--accent);
+
+  /* Borders — visible gray */
+  --border: #333333;
+  --border-active: var(--accent);
+
+  /* Sizing */
+  --icon-bar-w: 52px;
+  --side-panel-w: 320px;
+  --status-bar-h: 26px;
+  --tab-bar-h: 45px;
+  --terminal-h: 220px;
+  --breadcrumb-h: 26px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-normal: 200ms ease;
+}
+
+@theme inline {
+  --color-background: var(--bg-editor);
+  --color-foreground: var(--text-primary);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+/* ── Base ── */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-icon-bar);
+  color: var(--text-primary);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ── Scrollbar (Remix-style thin dark) ── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 170, 0.15);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 212, 170, 0.30);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── Selection ── */
+::selection {
+  background: rgba(0, 212, 170, 0.25);
+  color: inherit;
+}
+
+/* ── Utility classes ── */
+.font-mono {
+  font-family: var(--font-jetbrains-mono), 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+.font-sans {
+  font-family: var(--font-inter), 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ── IDE Pane borders ── */
+.ide-border-left {
+  border-left: 1px solid var(--border);
+}
+
+.ide-border-right {
+  border-right: 1px solid var(--border);
+}
+
+.ide-border-bottom {
+  border-bottom: 1px solid var(--border);
+}
+
+.ide-border-top {
+  border-top: 1px solid var(--border);
+}
+
+/* ── Button-reset for icon buttons ── */
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: color 0.15s, background 0.15s;
+  padding: 10px;
+  border-radius: 0;
+}
+
+.icon-btn:hover {
+  color: var(--accent);
+  background: rgba(0, 212, 170, 0.06);
+}
+
+.icon-btn.active {
+  color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* ── Terminal log lines ── */
+.log-info {
+  color: var(--info);
+}
+
+.log-success {
+  color: var(--success);
+}
+
+.log-error {
+  color: var(--error);
+}
+
+.log-warning {
+  color: var(--warning);
+}
+
+/* ── Glow effect for accent buttons ── */
+.btn-glow {
+  box-shadow: 0 0 12px rgba(0, 212, 170, 0.3);
+}
+
+.btn-glow:hover {
+  box-shadow: 0 0 20px rgba(0, 212, 170, 0.5);
+}
+
+/* ── Pulse animation for loading ── */
+@keyframes pulse-accent {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-accent {
+  animation: pulse-accent 1.5s ease-in-out infinite;
+}
+
+/* ── Smooth panel transitions ── */
+.side-panel-animated {
+  transition: width var(--transition-normal), opacity var(--transition-normal);
+  will-change: width;
+}
+
+/* ── Button hover lift ── */
+.btn-hover-lift {
+  transition: filter var(--transition-fast), transform var(--transition-fast);
+}
+
+.btn-hover-lift:hover:not(:disabled) {
+  filter: brightness(1.15);
+  transform: translateY(-0.5px);
+}
+
+.btn-hover-lift:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* ── Responsive fallback ── */
+@media (max-width: 768px) {
+  .ide-desktop-only {
+    display: none !important;
+  }
+
+  .ide-mobile-fallback {
+    display: flex !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .ide-mobile-fallback {
+    display: none !important;
+  }
+}
+
+/* ── Breadcrumb ── */
+.breadcrumb-bar {
+  height: var(--breadcrumb-h);
+  background: var(--bg-breadcrumb);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Smooth terminal resize ── */
+.terminal-animated {
+  transition: height var(--transition-normal);
+  will-change: height;
+}
+
+/* ── Focus ring for keyboard users ── */
+.focus-ring:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CHATBOT — Antigravity floating panel
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Chat panel (flex right-side container) ── */
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-side-panel);
+  overflow: hidden;
+  transition: opacity 200ms ease;
+  border-left: 1px solid var(--border);
+}
+
+.chat-panel-open {
+  opacity: 1;
+}
+
+.chat-panel-closed {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Header buttons ── */
+.chat-header-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.chat-header-btn:hover {
+  background: rgba(0, 212, 170, 0.08);
+  color: var(--accent);
+}
+
+/* ── Messages container ── */
+.chat-messages-container {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* ── Avatar ── */
+.chat-avatar {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* ── Message bubbles ── */
+.chat-bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  word-break: break-word;
+}
+
+.chat-message-user {
+  background: var(--accent-muted);
+  border: 1px solid rgba(0, 212, 170, 0.15);
+  border-radius: 12px 12px 2px 12px;
+  color: var(--text-primary);
+}
+
+.chat-message-ai {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px 12px 12px 2px;
+  color: var(--text-primary);
+}
+
+/* ── Typing indicator ── */
+.chat-typing-indicator {
+  display: flex;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+@keyframes chat-bounce {
+
+  0%,
+  80%,
+  100% {
+    transform: scale(0);
+    opacity: 0.4;
+  }
+
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.chat-typing-indicator span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: chat-bounce 1.4s infinite ease-in-out both;
+}
+
+.chat-typing-indicator span:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.chat-typing-indicator span:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+.chat-typing-indicator span:nth-child(3) {
+  animation-delay: 0s;
+}
+
+/* ── Suggestion chips ── */
+.chat-suggestion-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 150ms ease;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-suggestion-chip:hover {
+  background: var(--accent-muted);
+  color: var(--text-primary);
+  border-color: rgba(0, 212, 170, 0.3);
+}
+
+/* ── Textarea ── */
+.chat-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-textarea:focus {
+  border-color: var(--accent) !important;
+}
+
+.chat-textarea:disabled {
+  opacity: 0.5;
+}
+
+/* ── Send button hover ── */
+.chat-send-btn:hover:not(:disabled) {
+  filter: brightness(1.15);
+  transform: scale(1.05);
+}
+
+/* ── Markdown rendering inside AI messages ── */
+.chat-markdown p {
+  margin: 0 0 8px;
+}
+
+.chat-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown code {
+  background: var(--bg-terminal);
+  color: var(--accent);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: var(--font-jetbrains-mono), 'JetBrains Mono', monospace;
+}
+
+.chat-markdown pre {
+  background: var(--bg-terminal);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.chat-markdown pre code {
+  background: transparent;
+  padding: 0;
+  color: var(--text-primary);
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.chat-markdown li {
+  margin: 2px 0;
+}
+
+.chat-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.chat-markdown strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 8px 0 4px;
+}
+
+.chat-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.chat-markdown th {
+  background: var(--bg-surface);
+  font-weight: 600;
+}
+
+.chat-markdown blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+  margin: 6px 0;
+  color: var(--text-secondary);
+}
+
+/* ── Responsive: full-screen on mobile ── */
+@media (max-width: 768px) {
+  .chat-panel {
+    position: fixed;
+    top: 48px;
+    left: 0;
+    width: 100vw;
+    height: calc(100vh - 48px);
+    z-index: 50;
+  }
+}
