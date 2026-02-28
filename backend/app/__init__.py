@@ -1,0 +1,1 @@
+"""AlgoMint Backend Application Package."""
