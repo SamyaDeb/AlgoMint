@@ -106,6 +106,15 @@ export interface SubmitResponse {
   txid: string;
   explorer_url: string;
   app_id: number;
+  logs: string[];
+}
+
+export interface MethodCallResult {
+  txid: string;
+  explorerUrl: string;
+  returnValue: string | null;
+  logs: string[];
+  timestamp: Date;
 }
 
 export interface ApiError {

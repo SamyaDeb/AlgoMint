@@ -8,6 +8,7 @@ import type {
   DeployResponse,
   SubmitResponse,
   StateSchema,
+  SuggestedParams,
   FixRequest,
   ChatRequest,
   ChatResponse,
@@ -132,6 +133,15 @@ export async function deploySubmit(params: {
       signed_txn: params.signedTxn,
       network: params.network,
     }),
+  });
+}
+
+// ── Deploy: get suggested transaction params ─────────────────
+
+export async function getSuggestedParams(network: string): Promise<SuggestedParams> {
+  return apiFetch<SuggestedParams>("/deploy/suggest-params", {
+    method: "POST",
+    body: JSON.stringify({ network }),
   });
 }
 
