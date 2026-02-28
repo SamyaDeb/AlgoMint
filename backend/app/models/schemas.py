@@ -173,6 +173,12 @@ class SubmitResponse(BaseModel):
     txid: str
     explorer_url: str
     app_id: int = Field(default=0, description="Application ID assigned by the network.")
+    logs: list[str] = Field(default_factory=list, description="Base64-encoded log entries from the confirmed transaction.")
+
+
+class SuggestParamsRequest(BaseModel):
+    """POST /api/v1/deploy/suggest-params request body."""
+    network: str = Field(default="testnet", pattern="^(testnet|mainnet)$")
 
 
 # ── Chat ──────────────────────────────────────────────────────

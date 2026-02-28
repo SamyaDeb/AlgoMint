@@ -170,11 +170,11 @@ class AlgorandService:
 
     # ── 5.4  Transaction Submission ───────────────────────────
 
-    async def submit_signed_txn(self, signed_txn_b64: str) -> tuple[str, str, int]:
+    async def submit_signed_txn(self, signed_txn_b64: str) -> tuple[str, str, int, list[str]]:
         """
         Submit a signed transaction to the network.
 
-        Returns (txid, explorer_url, app_id).
+        Returns (txid, explorer_url, app_id, logs).
         """
         try:
             loop = asyncio.get_event_loop()
@@ -205,6 +205,7 @@ class AlgorandService:
             )
 
         app_id = 0
+        logs: list[str] = []
         try:
             loop = asyncio.get_event_loop()
             confirmed = await asyncio.wait_for(
@@ -215,12 +216,13 @@ class AlgorandService:
                 timeout=_ALGORAND_TIMEOUT,
             )
             app_id = confirmed.get("application-index", 0) or 0
-            logger.info("Transaction confirmed  txid=%s  app_id=%s", txid, app_id)
+            logs = confirmed.get("logs", []) or []
+            logger.info("Transaction confirmed  txid=%s  app_id=%s  logs=%d", txid, app_id, len(logs))
         except Exception as exc:
             logger.warning("Confirmation wait failed (txn may still confirm): %s", exc)
 
         explorer_url = self.get_explorer_url(txid, self.network)
-        return txid, explorer_url, app_id
+        return txid, explorer_url, app_id, logs
 
     # ── Helpers ───────────────────────────────────────────────
 

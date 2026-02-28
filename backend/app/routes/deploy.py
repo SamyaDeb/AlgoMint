@@ -1,8 +1,9 @@
 """
 Deploy routes.
 
-POST /api/v1/deploy/prepare — builds an unsigned ApplicationCreateTxn.
-POST /api/v1/deploy/submit  — submits a signed transaction to the Algorand network.
+POST /api/v1/deploy/prepare        — builds an unsigned ApplicationCreateTxn.
+POST /api/v1/deploy/submit         — submits a signed transaction to the Algorand network.
+POST /api/v1/deploy/suggest-params — returns suggested transaction parameters for a network.
 """
 
 from fastapi import APIRouter, Request
@@ -12,6 +13,8 @@ from app.models.schemas import (
     DeployRequest,
     DeployResponse,
     ErrorResponse,
+    SuggestedParamsResponse,
+    SuggestParamsRequest,
     SubmitRequest,
     SubmitResponse,
 )
@@ -62,6 +65,32 @@ async def deploy_submit(request: Request, body: SubmitRequest) -> SubmitResponse
     """Submit a wallet-signed transaction and wait for confirmation."""
     svc = AlgorandService(network=body.network)
 
-    txid, explorer_url, app_id = await svc.submit_signed_txn(body.signed_txn)
+    txid, explorer_url, app_id, logs = await svc.submit_signed_txn(body.signed_txn)
 
-    return SubmitResponse(txid=txid, explorer_url=explorer_url, app_id=app_id)
+    return SubmitResponse(txid=txid, explorer_url=explorer_url, app_id=app_id, logs=logs)
+
+
+@router.post(
+    "/suggest-params",
+    response_model=SuggestedParamsResponse,
+    responses={
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
+        502: {"model": ErrorResponse, "description": "Algorand node error"},
+    },
+    summary="Get suggested transaction parameters for a network",
+)
+@limiter.limit("30/minute")
+async def suggest_params(request: Request, body: SuggestParamsRequest) -> SuggestedParamsResponse:
+    """Fetch current suggested transaction parameters from the Algorand node."""
+    svc = AlgorandService(network=body.network)
+    sp = await svc.get_suggested_params()
+
+    return SuggestedParamsResponse(
+        fee=sp.fee,
+        first_round=sp.first,
+        last_round=sp.last,
+        genesis_hash=sp.gh,
+        genesis_id=sp.gen,
+        flat_fee=sp.flat_fee,
+        min_fee=sp.min_fee,
+    )
