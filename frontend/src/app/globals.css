@@ -41,7 +41,7 @@
   --border-active: var(--accent);
 
   /* Sizing */
-  --icon-bar-w: 52px;
+  --icon-bar-w: 22px;
   --side-panel-w: 320px;
   --status-bar-h: 26px;
   --tab-bar-h: 45px;
@@ -140,7 +140,7 @@ body {
   cursor: pointer;
   color: var(--text-secondary);
   transition: color 0.15s, background 0.15s;
-  padding: 10px;
+  padding: 4px;
   border-radius: 0;
 }
 
