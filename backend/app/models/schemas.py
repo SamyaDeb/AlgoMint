@@ -219,3 +219,164 @@ class ChatResponse(BaseModel):
     """POST /api/v1/chat response body."""
     reply: str
     suggestions: list[str] = Field(default_factory=list)
+
+
+# ── Analyze (Contract Visualizer) ─────────────────────────────
+
+class AnalyzeRequest(BaseModel):
+    """POST /api/v1/analyze request body."""
+    algorand_python_code: str = Field(
+        ...,
+        min_length=1,
+        max_length=100_000,
+        description="Converted Algorand Python source code to analyze.",
+    )
+    arc32_json: dict | None = Field(
+        default=None,
+        description="Optional ARC-32 app spec JSON from Puya compilation.",
+    )
+    solidity_code: str | None = Field(
+        default=None,
+        max_length=50_000,
+        description="Optional original Solidity source for mapping table.",
+    )
+
+
+class AnalyzedStateVariable(BaseModel):
+    """A single state variable extracted from algopy code."""
+    name: str
+    storage_type: str
+    data_type: str
+    default_value: str | None = None
+
+
+class AnalyzedMethodParam(BaseModel):
+    """A single method parameter."""
+    name: str
+    type: str
+
+
+class AnalyzedMethod(BaseModel):
+    """An ABI method or baremethod extracted from algopy code."""
+    name: str
+    decorator: str
+    params: list[AnalyzedMethodParam] = Field(default_factory=list)
+    return_type: str = "None"
+    is_readonly: bool = False
+    is_create: bool = False
+    allowed_actions: list[str] = Field(default_factory=list)
+    guards_count: int = 0
+    reads_state: list[str] = Field(default_factory=list)
+    writes_state: list[str] = Field(default_factory=list)
+    calls_methods: list[str] = Field(default_factory=list)
+    inner_txns: list[str] = Field(default_factory=list)
+    emits_events: list[str] = Field(default_factory=list)
+    line_number: int | None = None
+    abi_signature: str | None = None
+    description: str | None = None
+
+
+class AnalyzedSubroutine(BaseModel):
+    """A subroutine or helper function extracted from algopy code."""
+    name: str
+    decorator: str = "subroutine"
+    params: list[AnalyzedMethodParam] = Field(default_factory=list)
+    return_type: str = "None"
+    reads_state: list[str] = Field(default_factory=list)
+    writes_state: list[str] = Field(default_factory=list)
+    calls_methods: list[str] = Field(default_factory=list)
+    inner_txns: list[str] = Field(default_factory=list)
+    emits_events: list[str] = Field(default_factory=list)
+    guards_count: int = 0
+    line_number: int | None = None
+
+
+class CallGraphEdge(BaseModel):
+    """An edge in the internal call graph."""
+    from_: str = Field(alias="from")
+    to: str
+
+    model_config = {"populate_by_name": True}
+
+
+class StorageAccessEdge(BaseModel):
+    """An edge representing a method's access to a state variable."""
+    method: str
+    variable: str
+    access_type: str  # "read" | "write"
+
+
+class InnerTxnEdge(BaseModel):
+    """An edge representing a method's inner transaction."""
+    method: str
+    txn_type: str
+
+
+class AnalyzedEvent(BaseModel):
+    """An event emitted by the contract."""
+    name: str
+    emitted_by: list[str] = Field(default_factory=list)
+
+
+class SecurityNote(BaseModel):
+    """An auto-generated security observation."""
+    type: str  # "safe" | "warning" | "danger" | "info"
+    message: str
+    method: str | None = None
+
+
+class SolidityMappingEntry(BaseModel):
+    """A single Solidity → Algorand concept mapping."""
+    solidity_element: str
+    algorand_element: str
+    mapping_type: str  # "storage" | "context" | "control_flow" | "event" | "visibility" | etc.
+
+
+class AnalyzeResponse(BaseModel):
+    """POST /api/v1/analyze response body."""
+    contract_name: str
+    state_variables: list[AnalyzedStateVariable] = Field(default_factory=list)
+    methods: list[AnalyzedMethod] = Field(default_factory=list)
+    subroutines: list[AnalyzedSubroutine] = Field(default_factory=list)
+    call_graph: list[CallGraphEdge] = Field(default_factory=list)
+    storage_access_map: list[StorageAccessEdge] = Field(default_factory=list)
+    inner_txn_map: list[InnerTxnEdge] = Field(default_factory=list)
+    events: list[AnalyzedEvent] = Field(default_factory=list)
+    security_notes: list[SecurityNote] = Field(default_factory=list)
+    solidity_mapping: list[SolidityMappingEntry] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+# ── Multi-contract Analyze ────────────────────────────────────
+
+class MultiAnalyzeContractEntry(BaseModel):
+    """A single contract entry in a multi-contract analysis request."""
+    name: str = Field(..., description="Contract name/identifier.")
+    algorand_python_code: str = Field(..., min_length=1, max_length=100_000)
+    arc32_json: dict | None = None
+    solidity_code: str | None = None
+
+
+class MultiAnalyzeRequest(BaseModel):
+    """POST /api/v1/analyze-multi request body."""
+    contracts: list[MultiAnalyzeContractEntry] = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        description="List of contracts to analyze together.",
+    )
+
+
+class InterContractEdge(BaseModel):
+    """An edge representing a relationship between two contracts."""
+    from_contract: str
+    to_contract: str
+    relationship_type: str
+    via_method: str | None = None
+
+
+class MultiAnalyzeResponse(BaseModel):
+    """POST /api/v1/analyze-multi response body."""
+    contracts: list[AnalyzeResponse] = Field(default_factory=list)
+    inter_contract_edges: list[InterContractEdge] = Field(default_factory=list)
+    deployment_order: list[str] = Field(default_factory=list)

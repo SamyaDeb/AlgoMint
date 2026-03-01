@@ -12,6 +12,8 @@ import type {
   FixRequest,
   ChatRequest,
   ChatResponse,
+  ContractAnalysis,
+  MultiContractAnalysis,
 } from "@/types";
 import { ERROR_LABELS } from "@/types";
 
@@ -171,6 +173,44 @@ export async function sendChatMessage(
       message: params.message,
       history: params.history,
       context: params.context,
+    }),
+  });
+}
+
+// ── Analyze Contract (Visualizer) ────────────────────────────
+
+export async function analyzeContract(
+  algorandPythonCode: string,
+  arc32Json?: Record<string, unknown> | null,
+  solidityCode?: string,
+): Promise<ContractAnalysis> {
+  return apiFetch<ContractAnalysis>("/analyze", {
+    method: "POST",
+    body: JSON.stringify({
+      algorand_python_code: algorandPythonCode,
+      ...(arc32Json ? { arc32_json: arc32Json } : {}),
+      ...(solidityCode ? { solidity_code: solidityCode } : {}),
+    }),
+  });
+}
+
+export async function analyzeMultiContract(
+  contracts: {
+    name: string;
+    algorandPythonCode: string;
+    arc32Json?: Record<string, unknown> | null;
+    solidityCode?: string;
+  }[],
+): Promise<MultiContractAnalysis> {
+  return apiFetch<MultiContractAnalysis>("/analyze-multi", {
+    method: "POST",
+    body: JSON.stringify({
+      contracts: contracts.map((c) => ({
+        name: c.name,
+        algorand_python_code: c.algorandPythonCode,
+        ...(c.arc32Json ? { arc32_json: c.arc32Json } : {}),
+        ...(c.solidityCode ? { solidity_code: c.solidityCode } : {}),
+      })),
     }),
   });
 }

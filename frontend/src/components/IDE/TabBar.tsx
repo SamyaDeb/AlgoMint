@@ -1,6 +1,6 @@
 "use client";
 
-import { Sidebar, TerminalSquare, MessageSquare } from "lucide-react";
+import { Sidebar, TerminalSquare, MessageSquare, Network, Play, Loader2 } from "lucide-react";
 
 // ── Tab Bar — Remix-style file tabs above the editor ── //
 
@@ -17,12 +17,17 @@ interface TabBarProps {
   activeTabId: string;
   onTabChange: (id: string) => void;
   onTabClose: (id: string) => void;
+  onCompileTab?: (tabId: string) => void;
+  isCompiling?: boolean;
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
   isTerminalOpen: boolean;
   onToggleTerminal: () => void;
   isChatOpen: boolean;
   onToggleChat: () => void;
+  isVisualizerOpen: boolean;
+  onToggleVisualizer: () => void;
+  isVisualizerEnabled: boolean;
 }
 
 export default function TabBar({
@@ -30,12 +35,17 @@ export default function TabBar({
   activeTabId,
   onTabChange,
   onTabClose,
+  onCompileTab,
+  isCompiling,
   isSidebarOpen,
   onToggleSidebar,
   isTerminalOpen,
   onToggleTerminal,
   isChatOpen,
   onToggleChat,
+  isVisualizerOpen,
+  onToggleVisualizer,
+  isVisualizerEnabled,
 }: TabBarProps) {
   return (
     <div
@@ -63,6 +73,25 @@ export default function TabBar({
               borderBottom: isActive ? "1px solid transparent" : "1px solid var(--border)",
             }}
           >
+            {/* Compile button — shown on .algo.py tabs */}
+            {tab.label.endsWith(".algo.py") && onCompileTab && (
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCompileTab(tab.id);
+                }}
+                className="w-5 h-5 flex items-center justify-center rounded transition-colors hover:bg-[rgba(0,212,170,0.15)]"
+                style={{ color: "var(--accent)", cursor: "pointer" }}
+                title={isCompiling ? "Compiling…" : `Compile ${tab.label}`}
+              >
+                {isCompiling && tab.id === activeTabId ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Play size={12} fill="currentColor" />
+                )}
+              </span>
+            )}
+
             {/* Language icon */}
             <span className="text-[12px] opacity-60">
               {tab.icon || (tab.language === "sol" ? "◆" : tab.language === "python" ? "🐍" : "📄")}
@@ -121,6 +150,19 @@ export default function TabBar({
           title="Toggle Terminal"
         >
           <TerminalSquare size={20} />
+        </button>
+        <button
+          onClick={onToggleVisualizer}
+          className="p-2 rounded transition-colors hover:bg-[rgba(0,212,170,0.08)]"
+          style={{
+            color: isVisualizerOpen ? "var(--accent)" : isVisualizerEnabled ? "var(--text-muted)" : "var(--text-disabled, #333)",
+            opacity: isVisualizerEnabled ? 1 : 0.4,
+            cursor: isVisualizerEnabled ? "pointer" : "not-allowed",
+          }}
+          title={isVisualizerEnabled ? "Toggle Visualizer" : "Convert a contract first to use the Visualizer"}
+          disabled={!isVisualizerEnabled}
+        >
+          <Network size={20} />
         </button>
         <button
           onClick={onToggleChat}

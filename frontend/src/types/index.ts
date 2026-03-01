@@ -1,5 +1,19 @@
 // TypeScript type definitions for AlgoMint
 
+// ── Per-File Contract Data ───────────────────────────────────
+
+export interface ContractFileData {
+  algorandPythonCode: string;
+  approvalTeal: string;
+  clearTeal: string;
+  arc32AppSpec: ARC32AppSpec | null;
+  arc56Json: Record<string, unknown> | null;
+  compilationResult: CompilationResult | null;
+  stateSchema: StateSchema | null;
+  isConverted: boolean;
+  isCompiled: boolean;
+}
+
 export interface StateSchema {
   global_ints: number;
   global_bytes: number;
@@ -34,6 +48,11 @@ export interface ARC32AppSpec {
     local: { num_uints: number; num_byte_slices: number };
   };
   contract?: { name: string; desc?: string; methods: ARC4Method[] };
+  hints?: Record<string, {
+    call_config?: Record<string, string>;
+    read_only?: boolean;
+  }>;
+  bare_call_config?: Record<string, string>;
   [key: string]: unknown; // Allow extra Puya-generated fields
 }
 
@@ -227,3 +246,112 @@ export const ERROR_LABELS: Record<string, string> = {
   [ErrorCode.DANGEROUS_INPUT]: "Dangerous input detected",
   [ErrorCode.RATE_LIMIT_EXCEEDED]: "Rate limit exceeded",
 };
+
+// ── Contract Analysis (Visualizer) ───────────────────────────
+
+export interface AnalyzedStateVariable {
+  name: string;
+  storage_type: string; // "GlobalState" | "LocalState" | "Box" | "BoxMap" | "Unknown"
+  data_type: string;
+  default_value: string | null;
+}
+
+export interface AnalyzedMethodParam {
+  name: string;
+  type: string;
+}
+
+export interface AnalyzedMethod {
+  name: string;
+  decorator: string; // "abimethod" | "baremethod"
+  params: AnalyzedMethodParam[];
+  return_type: string;
+  is_readonly: boolean;
+  is_create: boolean;
+  allowed_actions: string[];
+  guards_count: number;
+  reads_state: string[];
+  writes_state: string[];
+  calls_methods: string[];
+  inner_txns: string[];
+  emits_events: string[];
+  line_number: number | null;
+  abi_signature?: string;
+  description?: string;
+}
+
+export interface AnalyzedSubroutine {
+  name: string;
+  decorator: string; // "subroutine" | "helper"
+  params: AnalyzedMethodParam[];
+  return_type: string;
+  reads_state: string[];
+  writes_state: string[];
+  calls_methods: string[];
+  inner_txns: string[];
+  emits_events: string[];
+  guards_count: number;
+  line_number: number | null;
+}
+
+export interface CallGraphEdge {
+  from: string;
+  to: string;
+}
+
+export interface StorageAccessEdge {
+  method: string;
+  variable: string;
+  access_type: "read" | "write";
+}
+
+export interface InnerTxnEdge {
+  method: string;
+  txn_type: string;
+}
+
+export interface AnalyzedEvent {
+  name: string;
+  emitted_by: string[];
+}
+
+export interface SecurityNote {
+  type: "safe" | "warning" | "danger" | "info";
+  message: string;
+  method: string | null;
+}
+
+export interface SolidityMappingEntry {
+  solidity_element: string;
+  algorand_element: string;
+  mapping_type: string;
+}
+
+export interface ContractAnalysis {
+  contract_name: string;
+  state_variables: AnalyzedStateVariable[];
+  methods: AnalyzedMethod[];
+  subroutines: AnalyzedSubroutine[];
+  call_graph: CallGraphEdge[];
+  storage_access_map: StorageAccessEdge[];
+  inner_txn_map: InnerTxnEdge[];
+  events: AnalyzedEvent[];
+  security_notes: SecurityNote[];
+  solidity_mapping: SolidityMappingEntry[];
+  errors: string[];
+}
+
+// ── Multi-Contract Analysis ──────────────────────────────────
+
+export interface InterContractEdge {
+  from_contract: string;
+  to_contract: string;
+  relationship_type: string;
+  via_method?: string;
+}
+
+export interface MultiContractAnalysis {
+  contracts: ContractAnalysis[];
+  inter_contract_edges: InterContractEdge[];
+  deployment_order: string[];
+}

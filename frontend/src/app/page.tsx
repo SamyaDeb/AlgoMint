@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import IconSidebar, { type PanelId } from "@/components/IDE/IconSidebar";
 import SidePanel from "@/components/IDE/SidePanel";
 import TabBar, { type EditorTab } from "@/components/IDE/TabBar";
@@ -11,9 +11,11 @@ import ConvertedCodeViewer from "@/components/Viewer/ConvertedCodeViewer";
 import WarningsPanel from "@/components/WarningsPanel";
 import ASTViewer from "@/components/ASTViewer";
 import ChatPanel from "@/components/Chat/ChatPanel";
+import ContractVisualizer from "@/components/Visualizer/ContractVisualizer";
+import MultiContractVisualizer from "@/components/Visualizer/MultiContractVisualizer";
 import type { ChatContext } from "@/types";
-import type { ARC32AppSpec, DeployedContract, CompilationResult } from "@/types";
-import { convertSolidity, compileAlgorandPython, deployPrepare, deploySubmit, fixAlgorandPython } from "@/lib/api";
+import type { ARC32AppSpec, DeployedContract, CompilationResult, ContractAnalysis, MultiContractAnalysis, ContractFileData } from "@/types";
+import { convertSolidity, compileAlgorandPython, deployPrepare, deploySubmit, getSuggestedParams, fixAlgorandPython, analyzeContract, analyzeMultiContract } from "@/lib/api";
 import { parseSolidity } from "@/utils/solidityParser";
 import { enrichAST, buildASTPromptSection } from "@/utils/astEnricher";
 import type { EnrichedContract, ASTWarning } from "@/utils/astEnricher";
@@ -71,14 +73,71 @@ export default function Home() {
     }
   ]);
 
-  // Always get the Solidity source from the contract.sol file node,
-  // regardless of which tab is active. This ensures convert/fix flows have the
-  // original Solidity even when the user is viewing converted.algo.py or TEAL.
-  const solidityFileNode = files.find(f => f.id === "contract.sol");
+  // ── Per-file contract data ── //
+  const [contractFiles, setContractFiles] = useState<Map<string, ContractFileData>>(new Map());
+
+  // Derive which .sol file is "active" based on the current tab
+  const activeSolFileId = activeTabId.endsWith(".sol")
+    ? activeTabId
+    : activeTabId.endsWith(".algo.py")
+      ? activeTabId.replace(".algo.py", ".sol")
+      : "contract.sol";
+
+  // Get the solidity source from the active .sol file
+  const solidityFileNode = files.find(f => f.id === activeSolFileId);
   const solidityCode = solidityFileNode?.content || "";
 
   // Active tab node (for editor display purposes)
   const activeFileNode = files.find(f => f.id === activeTabId);
+
+  // Get per-file data for the active sol file
+  const activeContractData = contractFiles.get(activeSolFileId);
+
+  // Helper to update per-file contract data
+  const updateContractFile = useCallback((solFileId: string, updates: Partial<ContractFileData>) => {
+    setContractFiles(prev => {
+      const next = new Map(prev);
+      const existing = next.get(solFileId) || {
+        algorandPythonCode: "",
+        approvalTeal: "",
+        clearTeal: "",
+        arc32AppSpec: null,
+        arc56Json: null,
+        compilationResult: null,
+        stateSchema: null,
+        isConverted: false,
+        isCompiled: false,
+      };
+      next.set(solFileId, { ...existing, ...updates });
+      return next;
+    });
+  }, []);
+
+  // ── Compiled contracts list & deploy target ── //
+  const compiledContracts = useMemo(() => {
+    const list: { id: string; name: string }[] = [];
+    contractFiles.forEach((data, solId) => {
+      if (data.isCompiled) {
+        const name = data.compilationResult?.contractName || solId.replace(".sol", "");
+        list.push({ id: solId, name });
+      }
+    });
+    return list;
+  }, [contractFiles]);
+
+  const [selectedDeployContract, setSelectedDeployContract] = useState("");
+
+  // Auto-select deploy contract when compiled contracts change
+  useEffect(() => {
+    if (compiledContracts.length > 0) {
+      // If current selection is invalid, pick the first compiled contract
+      if (!compiledContracts.find(c => c.id === selectedDeployContract)) {
+        setSelectedDeployContract(compiledContracts[0].id);
+      }
+    } else {
+      setSelectedDeployContract("");
+    }
+  }, [compiledContracts, selectedDeployContract]);
 
   // ── Editor state ── //
   const [algorandPythonCode, setAlgorandPythonCode] = useState("");
@@ -130,11 +189,34 @@ export default function Home() {
   // ── Chat ── //
   const [isChatOpen, setIsChatOpen] = useState(false);
 
+  // ── Visualizer ── //
+  const [isVisualizerOpen, setIsVisualizerOpen] = useState(false);
+  const [contractAnalysis, setContractAnalysis] = useState<ContractAnalysis | null>(null);
+  const [multiContractAnalysis, setMultiContractAnalysis] = useState<MultiContractAnalysis | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [visualizerSplit, setVisualizerSplit] = useState(50);
+
+  // Restore only the split ratio from localStorage (visualizer always starts closed)
+  useEffect(() => {
+    const savedSplit = localStorage.getItem("algomint_viz_split");
+    if (savedSplit) {
+      const v = parseInt(savedSplit, 10);
+      if (v >= 25 && v <= 75) setVisualizerSplit(v);
+    }
+  }, []);
+
+  // Persist split ratio
+  useEffect(() => {
+    localStorage.setItem("algomint_viz_split", String(visualizerSplit));
+  }, [visualizerSplit]);
+
   // ── Resizable panels ── //
   const [sidePanelWidth, setSidePanelWidth] = useState(320);
   const [chatPanelWidth, setChatPanelWidth] = useState(350);
   const [isDraggingSide, setIsDraggingSide] = useState(false);
   const [isDraggingChat, setIsDraggingChat] = useState(false);
+  const [isDraggingVisualizer, setIsDraggingVisualizer] = useState(false);
+  const editorAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -147,12 +229,18 @@ export default function Home() {
         const newWidth = window.innerWidth - e.clientX;
         if (newWidth >= 250 && newWidth <= 600) setChatPanelWidth(newWidth);
       }
+      if (isDraggingVisualizer && editorAreaRef.current) {
+        const rect = editorAreaRef.current.getBoundingClientRect();
+        const pct = ((e.clientX - rect.left) / rect.width) * 100;
+        if (pct >= 25 && pct <= 75) setVisualizerSplit(pct);
+      }
     };
     const handleMouseUp = () => {
       setIsDraggingSide(false);
       setIsDraggingChat(false);
+      setIsDraggingVisualizer(false);
     };
-    if (isDraggingSide || isDraggingChat) {
+    if (isDraggingSide || isDraggingChat || isDraggingVisualizer) {
       window.addEventListener("mousemove", handleMouseMove);
       window.addEventListener("mouseup", handleMouseUp);
       document.body.style.userSelect = "none";
@@ -162,7 +250,7 @@ export default function Home() {
       window.removeEventListener("mouseup", handleMouseUp);
       document.body.style.userSelect = "";
     };
-  }, [isDraggingSide, isDraggingChat]);
+  }, [isDraggingSide, isDraggingChat, isDraggingVisualizer]);
 
   // ── Helper: Add log ── //
   const addLog = useCallback(
@@ -192,6 +280,73 @@ export default function Home() {
     },
     []
   );
+
+  // ── Analyze contract for visualizer ── //
+  const handleAnalyze = useCallback(async () => {
+    if (!algorandPythonCode) return;
+    setIsAnalyzing(true);
+    try {
+      const result = await analyzeContract(
+        algorandPythonCode,
+        arc32AppSpec as Record<string, unknown> | null,
+        solidityCode || undefined,
+      );
+      setContractAnalysis(result);
+      addLog("success", `Contract analyzed: ${result.contract_name} — ${result.methods.length} methods, ${result.state_variables.length} state vars`);
+    } catch (err) {
+      addLog("error", `Analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [algorandPythonCode, arc32AppSpec, solidityCode, addLog]);
+
+  // ── Multi-contract analysis handler ── //
+  const handleMultiAnalyze = useCallback(async () => {
+    // Gather all converted contracts from contractFiles
+    const convertedContracts: { name: string; algorandPythonCode: string; arc32Json?: Record<string, unknown> | null; solidityCode?: string }[] = [];
+    contractFiles.forEach((cfData, fileId) => {
+      if (cfData.algorandPythonCode) {
+        const solFile = files.find(f => f.id === fileId);
+        convertedContracts.push({
+          name: fileId.replace('.sol', ''),
+          algorandPythonCode: cfData.algorandPythonCode,
+          arc32Json: cfData.arc32AppSpec as Record<string, unknown> | null,
+          solidityCode: solFile?.content,
+        });
+      }
+    });
+    if (convertedContracts.length < 2) {
+      // Fall back to single-contract analysis
+      handleAnalyze();
+      return;
+    }
+    setIsAnalyzing(true);
+    try {
+      const result = await analyzeMultiContract(convertedContracts);
+      setMultiContractAnalysis(result);
+      addLog('success', `Multi-contract analysis: ${result.contracts.length} contracts, ${result.inter_contract_edges.length} cross-contract edges`);
+    } catch (err) {
+      addLog('error', `Multi-contract analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [contractFiles, files, handleAnalyze, addLog]);
+
+  // ── Auto-analyze when visualizer opens ── //
+  const prevVisualizerOpen = useRef(false);
+  useEffect(() => {
+    if (isVisualizerOpen && !prevVisualizerOpen.current) {
+      // Count converted contracts
+      let convertedCount = 0;
+      contractFiles.forEach((cfData) => { if (cfData.algorandPythonCode) convertedCount++; });
+      if (convertedCount >= 2) {
+        handleMultiAnalyze();
+      } else if (algorandPythonCode && !contractAnalysis) {
+        handleAnalyze();
+      }
+    }
+    prevVisualizerOpen.current = isVisualizerOpen;
+  }, [isVisualizerOpen, algorandPythonCode, contractAnalysis, contractFiles, handleAnalyze, handleMultiAnalyze]);
 
   // ── Track wallet connection changes ── //
   const prevWalletConnected = useRef(isWalletConnected);
@@ -249,17 +404,18 @@ export default function Home() {
       // Cmd/Ctrl + Shift + C → copy active viewer code
       if (mod && e.shiftKey && e.key === "C") {
         e.preventDefault();
-        const codeToCopy =
-          activeTabId === "contract.sol" ? solidityCode
-            : activeTabId === "converted.algo.py" ? algorandPythonCode
-              : activeTabId === "approval.teal" ? approvalTeal
-                : activeTabId === "clear.teal" ? clearTeal
-                  : "";
-        if (codeToCopy) {
-          navigator.clipboard.writeText(codeToCopy).then(() => {
+        const content = getActiveContent();
+        if (content.code) {
+          navigator.clipboard.writeText(content.code).then(() => {
             addLog("info", "Code copied to clipboard.");
           });
         }
+      }
+
+      // Cmd/Ctrl + Shift + V → toggle visualizer
+      if (mod && e.shiftKey && e.key === "V") {
+        e.preventDefault();
+        setIsVisualizerOpen((p) => !p);
       }
     };
 
@@ -335,8 +491,13 @@ export default function Home() {
 
   // ── Actions ── //
   const handleConvert = async () => {
-    if (!solidityCode.trim()) {
-      addLog("warning", "No Solidity code to convert. Paste or load a contract first.");
+    // Determine which .sol file to convert
+    const targetSolId = activeSolFileId;
+    const targetFileNode = files.find(f => f.id === targetSolId);
+    const codeToConvert = targetFileNode?.content || "";
+
+    if (!codeToConvert.trim()) {
+      addLog("warning", `No Solidity code in ${targetSolId}. Paste or load a contract first.`);
       return;
     }
 
@@ -345,16 +506,16 @@ export default function Home() {
     setUnsupportedFeatures([]);
     setAstWarnings([]);
     setEnrichedAST(null);
-    addLog("info", "Starting AI conversion -- Solidity -> Algorand Python...");
+    addLog("info", `Converting ${targetSolId} → Algorand Python...`);
 
     // ── Step 1: Parse & enrich AST (frontend-side, graceful fallback) ──
     let astAnalysis: string | undefined;
     try {
-      const parseResult = parseSolidity(solidityCode);
+      const parseResult = parseSolidity(codeToConvert);
       if ("error" in parseResult) {
         addLog("warning", `AST parse skipped: ${parseResult.reason}`);
       } else {
-        const enriched = enrichAST(parseResult, solidityCode);
+        const enriched = enrichAST(parseResult, codeToConvert);
         setEnrichedAST(enriched);
         setAstWarnings(enriched.warnings);
         astAnalysis = buildASTPromptSection(enriched);
@@ -374,13 +535,31 @@ export default function Home() {
 
     // ── Step 2: Call Gemini with optional AST enrichment ──
     try {
-      const response = await convertSolidity(solidityCode, astAnalysis);
+      const response = await convertSolidity(codeToConvert, astAnalysis);
 
+      // Store per-file data
+      updateContractFile(targetSolId, {
+        algorandPythonCode: response.algorand_python_code,
+        stateSchema: response.state_schema,
+        isConverted: true,
+        // Reset compilation state for this file
+        isCompiled: false,
+        approvalTeal: "",
+        clearTeal: "",
+        arc32AppSpec: null,
+        arc56Json: null,
+        compilationResult: null,
+      });
+
+      // Update legacy globals (for backward compat)
       setAlgorandPythonCode(response.algorand_python_code);
       setStateSchema(response.state_schema);
       setUnsupportedFeatures(response.unsupported_features ?? []);
       setIsConverted(true);
       setCurrentStep(2);
+
+      // Invalidate cached analysis when code changes
+      setContractAnalysis(null);
 
       // Reset compilation state when new conversion happens
       setCompilationResult(null);
@@ -390,16 +569,18 @@ export default function Home() {
       setApprovalTeal("");
       setClearTeal("");
 
+      // Open per-file algo.py tab
+      const algoFileName = targetSolId.replace(".sol", ".algo.py");
       ensureTab({
-        id: "converted.algo.py",
-        label: "converted.algo.py",
+        id: algoFileName,
+        label: algoFileName,
         language: "python",
         closable: true,
         icon: "🐍",
       });
 
       const lineCount = response.algorand_python_code.split("\n").length;
-      addLog("success", `Conversion complete (${lineCount} lines Algorand Python).`);
+      addLog("success", `${targetSolId} converted (${lineCount} lines Algorand Python).`);
 
       if (response.unsupported_features?.length) {
         addLog(
@@ -425,42 +606,90 @@ export default function Home() {
   };
 
   const handleCompile = async () => {
-    if (!algorandPythonCode.trim()) {
-      addLog("warning", "No Algorand Python code to compile. Convert a Solidity contract first.");
+    // Determine which file to compile
+    const targetSolId = activeSolFileId;
+    const cfData = contractFiles.get(targetSolId);
+    const codeToCompile = cfData?.algorandPythonCode || algorandPythonCode;
+    const solCode = files.find(f => f.id === targetSolId)?.content || solidityCode;
+
+    if (!codeToCompile.trim()) {
+      addLog("warning", `No Algorand Python code for ${targetSolId}. Convert first.`);
       return;
     }
 
     setIsCompiling(true);
     setCompileError(null);
     setRetryAttempt(0);
-    addLog("info", "Compiling Algorand Python to TEAL via PuyaPy...");
+    addLog("info", `Compiling ${targetSolId.replace(".sol", ".algo.py")} → TEAL via PuyaPy...`);
 
-    let currentCode = algorandPythonCode;
+    let currentCode = codeToCompile;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const response = await compileAlgorandPython(currentCode);
 
-        setApprovalTeal(response.approval_teal);
-        setClearTeal(response.clear_teal);
-        setIsCompiled(true);
-        setCurrentStep(3);
-
-        // Store the REAL ARC-32 & ARC-56 from Puya compiler
-        if (response.arc32_json) {
-          // Normalize: PuyaPy puts methods in contract.methods, not top-level
+        // Normalize ARC-32
+        const normalizedSpec: ARC32AppSpec | null = response.arc32_json ? (() => {
           const rawSpec = response.arc32_json as ARC32AppSpec;
-          const normalizedSpec: ARC32AppSpec = {
+          return {
             ...rawSpec,
             name: rawSpec.name || rawSpec.contract?.name || "Contract",
             methods: rawSpec.methods?.length
               ? rawSpec.methods
               : (rawSpec.contract?.methods ?? []),
           };
-          setArc32AppSpec(normalizedSpec);
+        })() : null;
+
+        const compResult: CompilationResult = {
+          success: true,
+          contractName: response.contract_name || "Contract",
+          approvalTeal: response.approval_teal,
+          clearTeal: response.clear_teal,
+          arc32Json: normalizedSpec,
+          arc56Json: response.arc56_json || null,
+          approvalProgramSize: response.approval_program_size || response.approval_teal.length,
+          clearProgramSize: response.clear_program_size || response.clear_teal.length,
+          compilationWarnings: response.compilation_warnings || [],
+        };
+
+        // Derive state schema from ARC-32
+        let newStateSchema = cfData?.stateSchema || stateSchema;
+        if (response.arc32_json) {
+          const spec = response.arc32_json as ARC32AppSpec;
+          if (spec.state) {
+            newStateSchema = {
+              global_ints: spec.state.global?.num_uints ?? 0,
+              global_bytes: spec.state.global?.num_byte_slices ?? 0,
+              local_ints: spec.state.local?.num_uints ?? 0,
+              local_bytes: spec.state.local?.num_byte_slices ?? 0,
+            };
+          }
+        }
+
+        // Store per-file compilation data
+        updateContractFile(targetSolId, {
+          approvalTeal: response.approval_teal,
+          clearTeal: response.clear_teal,
+          arc32AppSpec: normalizedSpec,
+          arc56Json: response.arc56_json || null,
+          compilationResult: compResult,
+          stateSchema: newStateSchema,
+          isCompiled: true,
+        });
+
+        // Update legacy globals
+        setApprovalTeal(response.approval_teal);
+        setClearTeal(response.clear_teal);
+        setIsCompiled(true);
+        setCurrentStep(3);
+        if (normalizedSpec) setArc32AppSpec(normalizedSpec);
+        if (response.arc56_json) setArc56Json(response.arc56_json);
+        setCompilationResult(compResult);
+        if (newStateSchema) setStateSchema(newStateSchema);
+
+        if (normalizedSpec) {
           const methodCount = normalizedSpec.methods?.length ?? 0;
           addLog("success", `ARC-32 app spec from Puya: ${methodCount} methods`);
-
           ensureTab({
             id: "application.json",
             label: "application.json",
@@ -470,44 +699,7 @@ export default function Home() {
           });
         }
         if (response.arc56_json) {
-          setArc56Json(response.arc56_json);
           addLog("info", "ARC-56 app spec generated by Puya.");
-        }
-
-        // Store full compilation result (use normalized spec)
-        const normalizedArc32 = response.arc32_json ? (() => {
-          const raw = response.arc32_json as ARC32AppSpec;
-          return {
-            ...raw,
-            name: raw.name || raw.contract?.name || "Contract",
-            methods: raw.methods?.length ? raw.methods : (raw.contract?.methods ?? []),
-          } as ARC32AppSpec;
-        })() : null;
-
-        const compResult: CompilationResult = {
-          success: true,
-          contractName: response.contract_name || "Contract",
-          approvalTeal: response.approval_teal,
-          clearTeal: response.clear_teal,
-          arc32Json: normalizedArc32,
-          arc56Json: response.arc56_json || null,
-          approvalProgramSize: response.approval_program_size || response.approval_teal.length,
-          clearProgramSize: response.clear_program_size || response.clear_teal.length,
-          compilationWarnings: response.compilation_warnings || [],
-        };
-        setCompilationResult(compResult);
-
-        // Update state schema from ARC-32 if available
-        if (response.arc32_json) {
-          const spec = response.arc32_json as ARC32AppSpec;
-          if (spec.state) {
-            setStateSchema({
-              global_ints: spec.state.global?.num_uints ?? 0,
-              global_bytes: spec.state.global?.num_byte_slices ?? 0,
-              local_ints: spec.state.local?.num_uints ?? 0,
-              local_bytes: spec.state.local?.num_byte_slices ?? 0,
-            });
-          }
         }
 
         ensureTab({
@@ -562,15 +754,18 @@ export default function Home() {
               cleanError = cleanError.slice(0, 10000) + "\n... (truncated)";
             }
             const fixResponse = await fixAlgorandPython({
-              solidity_code: solidityCode,
+              solidity_code: solCode,
               algorand_python_code: currentCode,
               error_message: cleanError,
             });
 
             currentCode = fixResponse.algorand_python_code;
+            // Update both per-file and legacy global
+            updateContractFile(targetSolId, { algorandPythonCode: currentCode });
             setAlgorandPythonCode(currentCode);
 
             if (fixResponse.state_schema) {
+              updateContractFile(targetSolId, { stateSchema: fixResponse.state_schema });
               setStateSchema(fixResponse.state_schema);
             }
 
@@ -619,8 +814,17 @@ export default function Home() {
     // Disconnect logging handled by useEffect above
   };
 
-  const handleDeploy = async () => {
-    if (!approvalTeal || !clearTeal) {
+  const handleDeploy = async (createArgs?: Record<string, string>, foreignAppIds?: number[]) => {
+    // Use selected deploy contract from the dropdown, fall back to activeSolFileId
+    const deployTargetId = selectedDeployContract || activeSolFileId;
+    const cfData = contractFiles.get(deployTargetId);
+    const deployApprovalTeal = cfData?.approvalTeal || approvalTeal;
+    const deployClearTeal = cfData?.clearTeal || clearTeal;
+    const deployArc32 = cfData?.arc32AppSpec || arc32AppSpec;
+    const deployArc56 = cfData?.arc56Json || arc56Json;
+    const deployCompResult = cfData?.compilationResult || compilationResult;
+
+    if (!deployApprovalTeal || !deployClearTeal) {
       addLog("warning", "No compiled TEAL to deploy. Compile first.");
       return;
     }
@@ -629,8 +833,8 @@ export default function Home() {
       return;
     }
 
-    // Use state schema from ARC-32 (real Puya data) or fallback to convert-time schema
-    const deploySchema = stateSchema || {
+    // Use state schema from per-file data, ARC-32, or fallback
+    const deploySchema = cfData?.stateSchema || stateSchema || {
       global_ints: 0, global_bytes: 0, local_ints: 0, local_bytes: 0,
     };
 
@@ -645,8 +849,8 @@ export default function Home() {
       addLog("info", "Preparing deployment transaction...");
 
       const prepareRes = await deployPrepare({
-        approvalTeal,
-        clearTeal,
+        approvalTeal: deployApprovalTeal,
+        clearTeal: deployClearTeal,
         stateSchema: deploySchema,
         sender: walletAddress,
         network,
@@ -677,10 +881,183 @@ export default function Home() {
       if (extraPages > 0) {
         addLog("info", `Program needs ${extraPages} extra page(s) (larger contract).`);
       }
+
+      // ── Encode create method args (Phase 4 Multi-Contract) ──
+      let appArgs: Uint8Array[] | undefined;
+      // Foreign arrays built from reference type args
+      const refForeignApps: bigint[] = [];
+      const refForeignAccounts: string[] = [];
+      const refForeignAssets: bigint[] = [];
+      // OnComplete derived from ARC-32 hints (defaults to NoOp)
+      let createOnComplete: algosdk.OnApplicationComplete = algosdk.OnApplicationComplete.NoOpOC;
+      // Two-step deploy: if the method is CALL-only but bare create is available
+      let needsTwoStepDeploy = false;
+      // Store the method info for the second step
+      let postCreateMethod: { name: string; args: { name: string; type: string }[]; returns: { type: string } } | null = null;
+      let postCreateEncodedArgs: Uint8Array[] | undefined;
+
+      if (createArgs && Object.keys(createArgs).length > 0 && deployArc32) {
+        try {
+          const allMethods = deployArc32.contract?.methods ?? deployArc32.methods ?? [];
+          const hints = deployArc32.hints as Record<string, { call_config?: Record<string, string> }> | undefined;
+
+          // Map ARC-32 call_config keys to algosdk OnComplete values
+          const OC_MAP: Record<string, algosdk.OnApplicationComplete> = {
+            no_op: algosdk.OnApplicationComplete.NoOpOC,
+            opt_in: algosdk.OnApplicationComplete.OptInOC,
+            close_out: algosdk.OnApplicationComplete.CloseOutOC,
+            update_application: algosdk.OnApplicationComplete.UpdateApplicationOC,
+            delete_application: algosdk.OnApplicationComplete.DeleteApplicationOC,
+          };
+
+          // Find the create method signature from hints — one that allows CREATE
+          let createMethod: { name: string; args: { name: string; type: string }[]; returns: { type: string } } | null = null;
+          let createMethodSig = "";
+          let methodIsCreateAllowed = false;
+
+          if (hints) {
+            for (const [sig, hint] of Object.entries(hints)) {
+              const cc = hint.call_config;
+              if (!cc) continue;
+              // Find which OnComplete action allows CREATE
+              for (const [action, config] of Object.entries(cc)) {
+                if (config === "CREATE" || config === "ALL") {
+                  const methodName = sig.split("(")[0];
+                  const method = allMethods.find(m => m.name === methodName);
+                  if (method && method.args.length > 0) {
+                    createMethod = method;
+                    createMethodSig = sig;
+                    methodIsCreateAllowed = true;
+                    // Set the OnComplete from the hint action
+                    if (OC_MAP[action] !== undefined) {
+                      createOnComplete = OC_MAP[action];
+                    }
+                    break;
+                  }
+                }
+              }
+              if (createMethod) break;
+            }
+          }
+
+          // If no method with CREATE hint found, look for method by name
+          // (this method will be CALL-only — needs two-step deploy)
+          if (!createMethod) {
+            createMethod = allMethods.find(m => (m.name === "create" || m.name === "initialize") && m.args.length > 0) || null;
+          }
+
+          if (createMethod) {
+            // Check if this method can be called during creation
+            if (!methodIsCreateAllowed && createMethod) {
+              // Method is CALL-only — check if bare creation is available
+              const bareConfig = deployArc32.bare_call_config as Record<string, string> | undefined;
+              const bareCreatable = bareConfig && Object.values(bareConfig).some(v => v === "CREATE" || v === "ALL");
+              if (bareCreatable) {
+                needsTwoStepDeploy = true;
+                addLog("info", `Method "${createMethod.name}" is CALL-only. Using two-step deploy: bare create → then call method.`);
+              } else {
+                addLog("warning", `Method "${createMethod.name}" is CALL-only and no bare create available. Attempting direct deploy.`);
+              }
+            }
+
+            // Build ABI method and get 4-byte selector
+            const abiMethod = new algosdk.ABIMethod({
+              name: createMethod.name,
+              args: createMethod.args.map(a => ({ type: a.type, name: a.name })),
+              returns: { type: createMethod.returns.type },
+            });
+            const selector = abiMethod.getSelector();
+            const selectorHex = Array.from(selector).map(b => b.toString(16).padStart(2, "0")).join("");
+            const methodSig = `${createMethod.name}(${createMethod.args.map(a => a.type).join(",")})${createMethod.returns.type}`;
+            addLog("info", `ARC-4 method: "${methodSig}" selector=0x${selectorHex} createAllowed=${methodIsCreateAllowed}`);
+            if (createMethodSig) {
+              addLog("info", `ARC-32 hint sig: "${createMethodSig}" OnComplete=${createOnComplete}`);
+            }
+
+            // ARC-4 reference types need special encoding:
+            // - "application" -> index into foreignApps (0 = current app, 1+ = foreignApps array)
+            // - "account"     -> index into foreignAccounts (0 = sender, 1+ = accounts array)
+            // - "asset"       -> index into foreignAssets (0-based)
+
+            // Encode each argument
+            const encodedArgs: Uint8Array[] = [selector];
+            for (const argDef of createMethod.args) {
+              const rawValue = createArgs[argDef.name] ?? "";
+
+              if (argDef.type === "application") {
+                // Add app ID to foreign apps array, encode as uint8 index
+                const appId = BigInt(rawValue);
+                refForeignApps.push(appId);
+                // Index is 1-based: 0 = current app, 1 = foreignApps[0], etc.
+                const idx = refForeignApps.length;
+                encodedArgs.push(new Uint8Array([idx]));
+                addLog("info", `  Arg "${argDef.name}": application ref → foreignApps[${idx - 1}] = ${rawValue}`);
+              } else if (argDef.type === "account") {
+                // Add address to foreign accounts, encode as uint8 index
+                refForeignAccounts.push(rawValue);
+                // Index is 1-based: 0 = sender, 1 = accounts[0], etc.
+                const idx = refForeignAccounts.length;
+                encodedArgs.push(new Uint8Array([idx]));
+                addLog("info", `  Arg "${argDef.name}": account ref → foreignAccounts[${idx - 1}]`);
+              } else if (argDef.type === "asset") {
+                // Add asset ID to foreign assets, encode as uint8 index
+                const assetId = BigInt(rawValue);
+                refForeignAssets.push(assetId);
+                // Index is 0-based for assets
+                const idx = refForeignAssets.length - 1;
+                encodedArgs.push(new Uint8Array([idx]));
+                addLog("info", `  Arg "${argDef.name}": asset ref → foreignAssets[${idx}] = ${rawValue}`);
+              } else {
+                // Regular ABI value type
+                const abiType = algosdk.ABIType.from(argDef.type);
+                let value: algosdk.ABIValue = rawValue;
+                // Convert string to appropriate type for ABI encoding
+                if (argDef.type.startsWith("uint") || argDef.type.startsWith("int")) {
+                  value = BigInt(rawValue);
+                } else if (argDef.type === "bool") {
+                  value = rawValue === "true" || rawValue === "1";
+                } else if (argDef.type === "address") {
+                  value = rawValue; // already a string address
+                }
+                encodedArgs.push(abiType.encode(value as algosdk.ABIValue));
+              }
+            }
+
+            if (needsTwoStepDeploy) {
+              // Save for post-create call; don't set appArgs for the create txn
+              postCreateMethod = createMethod;
+              postCreateEncodedArgs = encodedArgs;
+              addLog("info", `Encoded ${createMethod.args.length} arg(s) for post-create call.`);
+            } else {
+              appArgs = encodedArgs;
+              addLog("info", `Create method "${createMethod.name}" with ${createMethod.args.length} arg(s) encoded for create txn.`);
+            }
+          }
+        } catch (encodeErr) {
+          const msg = encodeErr instanceof Error ? encodeErr.message : "Failed to encode create args";
+          addLog("warning", `ABI encoding warning: ${msg}. Deploying without create args.`);
+        }
+      }
+
+      // Build combined foreign apps list: from reference type args + user-provided cross-contract deps
+      const combinedForeignApps: bigint[] = [...refForeignApps];
+      if (foreignAppIds && foreignAppIds.length > 0) {
+        for (const id of foreignAppIds) {
+          const bigId = BigInt(id);
+          if (!combinedForeignApps.includes(bigId)) {
+            combinedForeignApps.push(bigId);
+          }
+        }
+      }
+
+      if (combinedForeignApps.length > 0) {
+        addLog("info", `Including ${combinedForeignApps.length} foreign app(s) in transaction: [${combinedForeignApps.join(", ")}]`);
+      }
+
       const txnObj = algosdk.makeApplicationCreateTxnFromObject({
         sender: walletAddress,
         suggestedParams,
-        onComplete: algosdk.OnApplicationComplete.NoOpOC,
+        onComplete: appArgs ? createOnComplete : algosdk.OnApplicationComplete.NoOpOC,
         approvalProgram,
         clearProgram,
         numGlobalInts: deploySchema.global_ints,
@@ -688,6 +1065,10 @@ export default function Home() {
         numLocalInts: deploySchema.local_ints,
         numLocalByteSlices: deploySchema.local_bytes,
         extraPages,
+        ...(appArgs ? { appArgs } : {}),
+        ...(combinedForeignApps.length > 0 ? { foreignApps: combinedForeignApps } : {}),
+        ...(refForeignAccounts.length > 0 ? { foreignAccounts: refForeignAccounts } : {}),
+        ...(refForeignAssets.length > 0 ? { foreignAssets: refForeignAssets.map(id => BigInt(id)) } : {}),
       });
 
       // ── Stage 3: Sign with Pera Wallet ──
@@ -718,7 +1099,75 @@ export default function Home() {
         network,
       });
 
-      // ── Stage 4: Confirmed ──
+      // ── Stage 4b: Two-step deploy — call initialize method on the new app ──
+      if (needsTwoStepDeploy && postCreateEncodedArgs && postCreateMethod && submitRes.app_id > 0) {
+        setDeployStage("Initializing contract (step 2)...");
+        addLog("info", `App created (ID: ${submitRes.app_id}). Now calling "${postCreateMethod.name}" to initialize...`);
+
+        // Get fresh suggested params for the method call
+        const sp2Raw = await getSuggestedParams(network);
+        const genesisHashBytes2 = new Uint8Array(Buffer.from(sp2Raw.genesis_hash, "base64"));
+        const suggestedParams2: algosdk.SuggestedParams = {
+          fee: sp2Raw.fee ?? 0,
+          firstValid: sp2Raw.first_round,
+          lastValid: sp2Raw.last_round,
+          genesisHash: genesisHashBytes2,
+          genesisID: sp2Raw.genesis_id,
+          flatFee: sp2Raw.flat_fee ?? false,
+          minFee: sp2Raw.min_fee ?? 1000,
+        };
+
+        // Build foreign apps for the method call — include ref args + cross-contract deps
+        const step2ForeignApps: bigint[] = [...refForeignApps];
+        if (foreignAppIds && foreignAppIds.length > 0) {
+          for (const id of foreignAppIds) {
+            const bigId = BigInt(id);
+            if (!step2ForeignApps.includes(bigId)) {
+              step2ForeignApps.push(bigId);
+            }
+          }
+        }
+
+        // Build ApplicationCallTxn to the newly created app
+        const callTxn = algosdk.makeApplicationCallTxnFromObject({
+          sender: walletAddress,
+          suggestedParams: suggestedParams2,
+          appIndex: BigInt(submitRes.app_id),
+          onComplete: algosdk.OnApplicationComplete.NoOpOC,
+          appArgs: postCreateEncodedArgs,
+          ...(step2ForeignApps.length > 0 ? { foreignApps: step2ForeignApps } : {}),
+          ...(refForeignAccounts.length > 0 ? { foreignAccounts: refForeignAccounts } : {}),
+          ...(refForeignAssets.length > 0 ? { foreignAssets: refForeignAssets.map(id => BigInt(id)) } : {}),
+        });
+
+        // Sign the method call
+        setDeployStage("Sign initialization in your wallet...");
+        addLog("info", `Awaiting wallet signature for "${postCreateMethod.name}" call...`);
+
+        const signedCall = await peraWallet.signTransaction([
+          [{ txn: callTxn }],
+        ]);
+
+        if (!signedCall || signedCall.length === 0) {
+          throw new Error("No signed transaction returned for initialization call.");
+        }
+
+        const signedCallBytes = signedCall[0] instanceof Uint8Array
+          ? signedCall[0]
+          : new Uint8Array(signedCall[0] as ArrayLike<number>);
+        const signedCallBase64 = Buffer.from(signedCallBytes).toString("base64");
+
+        // Submit the method call
+        setDeployStage("Submitting initialization...");
+        const callRes = await deploySubmit({
+          signedTxn: signedCallBase64,
+          network,
+        });
+
+        addLog("success", `Initialization "${postCreateMethod.name}" confirmed: ${callRes.txid.slice(0, 8)}...${callRes.txid.slice(-4)}`);
+      }
+
+      // ── Stage 5: Confirmed ──
       setTxid(submitRes.txid);
       setExplorerUrl(submitRes.explorer_url);
       setDeployStage("");
@@ -751,21 +1200,23 @@ export default function Home() {
         explorerUrl: appExplorerUrl,
         network,
         timestamp: new Date(),
-        contractName: compilationResult?.contractName || arc32AppSpec?.name || "Contract",
-        arc32Json: arc32AppSpec || null,
-        arc56Json: arc56Json || null,
+        contractName: deployCompResult?.contractName || deployArc32?.name || "Contract",
+        arc32Json: deployArc32 || null,
+        arc56Json: deployArc56 || null,
       };
       setDeployedContracts((prev) => [deployedContract, ...prev]);
 
       // Update ARC-32 spec with network info
-      if (arc32AppSpec) {
-        setArc32AppSpec({
-          ...arc32AppSpec,
+      if (deployArc32) {
+        const updatedSpec = {
+          ...deployArc32,
           networks: {
-            ...arc32AppSpec.networks,
+            ...deployArc32.networks,
             [network]: { appId: parseInt(appId) || 0 },
           },
-        });
+        };
+        setArc32AppSpec(updatedSpec);
+        updateContractFile(deployTargetId, { arc32AppSpec: updatedSpec });
       }
 
       const truncatedTxid = `${submitRes.txid.slice(0, 8)}...${submitRes.txid.slice(-4)}`;
@@ -809,19 +1260,45 @@ export default function Home() {
 
   // ── Determine what to show in the editor pane based on active tab ── //
   const getActiveContent = (): { code: string; language: string; readOnly: boolean } => {
-    switch (activeTabId) {
-      case "contract.sol":
-        return { code: solidityCode, language: "sol", readOnly: false };
-      case "converted.algo.py":
+    // Per-file .algo.py tabs (e.g. "Token.algo.py", "contract.algo.py")
+    if (activeTabId.endsWith(".algo.py")) {
+      const solFileId = activeTabId.replace(".algo.py", ".sol");
+      const cfData = contractFiles.get(solFileId);
+      if (cfData?.algorandPythonCode) {
+        return { code: cfData.algorandPythonCode, language: "python", readOnly: true };
+      }
+      // Legacy fallback for old "converted.algo.py" tab
+      if (activeTabId === "converted.algo.py") {
         return { code: algorandPythonCode, language: "python", readOnly: true };
+      }
+      return { code: "", language: "python", readOnly: true };
+    }
+
+    // .sol files — editable
+    if (activeTabId.endsWith(".sol")) {
+      const fileNode = files.find(f => f.id === activeTabId);
+      return { code: fileNode?.content || "", language: "sol", readOnly: false };
+    }
+
+    switch (activeTabId) {
       case "approval.teal":
         return { code: approvalTeal, language: "plaintext", readOnly: true };
       case "clear.teal":
         return { code: clearTeal, language: "plaintext", readOnly: true };
       case "application.json":
         return { code: arc32AppSpec ? JSON.stringify(arc32AppSpec, null, 2) : "", language: "json", readOnly: true };
-      default:
+      default: {
+        // Check if it's a user-created file
+        const fileNode = files.find(f => f.id === activeTabId);
+        if (fileNode) {
+          return {
+            code: fileNode.content || "",
+            language: fileNode.name.endsWith(".py") ? "python" : "plaintext",
+            readOnly: !fileNode.name.endsWith(".sol"),
+          };
+        }
         return { code: "", language: "plaintext", readOnly: true };
+      }
     }
   };
 
@@ -884,17 +1361,18 @@ export default function Home() {
               })}
               onDeleteFile={handleDeleteFile}
               solidityCode={solidityCode}
+              contractFiles={contractFiles}
               onConvert={handleConvert}
               isConverting={isConverting}
-              isConverted={isConverted}
+              isConverted={activeContractData?.isConverted || false}
               convertError={convertError}
               unsupportedFeatures={unsupportedFeatures}
               onCompile={handleCompile}
               isCompiling={isCompiling}
-              isCompiled={isCompiled}
+              isCompiled={activeContractData?.isCompiled || false}
               compileError={compileError}
-              approvalSize={approvalTeal.length}
-              clearSize={clearTeal.length}
+              approvalSize={(activeContractData?.approvalTeal || approvalTeal).length}
+              clearSize={(activeContractData?.clearTeal || clearTeal).length}
               retryAttempt={retryAttempt}
               maxRetries={maxRetries}
               isWalletConnected={isWalletConnected}
@@ -909,12 +1387,47 @@ export default function Home() {
               explorerUrl={explorerUrl}
               network={network}
               onNetworkChange={handleNetworkChange}
-              arc32AppSpec={arc32AppSpec}
+              compiledContracts={compiledContracts}
+              selectedDeployContract={selectedDeployContract}
+              onSelectDeployContract={setSelectedDeployContract}
+              arc32AppSpec={(() => {
+                // Use deploy target's ARC-32, not active file's
+                if (selectedDeployContract) {
+                  const deployData = contractFiles.get(selectedDeployContract);
+                  if (deployData?.arc32AppSpec) return deployData.arc32AppSpec;
+                }
+                return activeContractData?.arc32AppSpec || arc32AppSpec;
+              })()}
+              multiContractAnalysis={multiContractAnalysis}
               deployedContracts={deployedContracts}
-              approvalTeal={approvalTeal}
-              clearTeal={clearTeal}
-              compilationResult={compilationResult}
-              arc56Json={arc56Json}
+              approvalTeal={(() => {
+                if (selectedDeployContract) {
+                  const d = contractFiles.get(selectedDeployContract);
+                  if (d?.approvalTeal) return d.approvalTeal;
+                }
+                return activeContractData?.approvalTeal || approvalTeal;
+              })()}
+              clearTeal={(() => {
+                if (selectedDeployContract) {
+                  const d = contractFiles.get(selectedDeployContract);
+                  if (d?.clearTeal) return d.clearTeal;
+                }
+                return activeContractData?.clearTeal || clearTeal;
+              })()}
+              compilationResult={(() => {
+                if (selectedDeployContract) {
+                  const d = contractFiles.get(selectedDeployContract);
+                  if (d?.compilationResult) return d.compilationResult;
+                }
+                return activeContractData?.compilationResult || compilationResult;
+              })()}
+              arc56Json={(() => {
+                if (selectedDeployContract) {
+                  const d = contractFiles.get(selectedDeployContract);
+                  if (d?.arc56Json) return d.arc56Json;
+                }
+                return activeContractData?.arc56Json || arc56Json;
+              })()}
               peraWallet={peraWallet}
               onLog={(type, message) => addLog(type, message)}
             />
@@ -946,50 +1459,82 @@ export default function Home() {
             activeTabId={activeTabId}
             onTabChange={setActiveTabId}
             onTabClose={handleTabClose}
+            onCompileTab={(tabId) => {
+              setActiveTabId(tabId);
+              handleCompile();
+            }}
+            isCompiling={isCompiling}
             isSidebarOpen={isSidebarOpen}
             onToggleSidebar={() => setIsSidebarOpen((p) => !p)}
             isTerminalOpen={!terminalCollapsed}
             onToggleTerminal={() => setTerminalCollapsed((p) => !p)}
             isChatOpen={isChatOpen}
             onToggleChat={() => setIsChatOpen((p) => !p)}
+            isVisualizerOpen={isVisualizerOpen}
+            onToggleVisualizer={() => setIsVisualizerOpen((p) => !p)}
+            isVisualizerEnabled={!!(activeContractData?.algorandPythonCode || algorandPythonCode)}
           />
           </div>
 
           {/* Editor pane */}
           <div className="flex-1 overflow-hidden flex flex-col" style={{ backgroundColor: "var(--bg-editor)" }}>
             {/* Warnings bar (between tab bar and editor, only when warnings exist) */}
-            {astWarnings.length > 0 && activeTabId === "contract.sol" && (
+            {astWarnings.length > 0 && activeTabId.endsWith(".sol") && (
               <WarningsPanel warnings={astWarnings} />
             )}
 
-            {/* Main editor */}
-            <div className="flex-1 overflow-hidden">
-            {activeContent.readOnly ? (
-              <ConvertedCodeViewer
-                code={activeContent.code}
-                language={activeContent.language}
-                isLoading={
-                  (activeTabId === "converted.algo.py" && isConverting) ||
-                  (activeTabId.endsWith(".teal") && isCompiling)
-                }
-              />
-            ) : (
-              <SolidityEditor
-                value={solidityCode}
-                onChange={(newCode) => {
-                  if (!activeFileNode) return;
-                  setFiles(prev => prev.map(f =>
-                    f.id === activeTabId ? { ...f, content: newCode } : f
-                  ));
-                }}
-                readOnly={isConverting}
-                onCursorChange={handleCursorChange}
-              />
-            )}
+            {/* Main editor area — splits horizontally when visualizer is open */}
+            <div className="flex-1 overflow-hidden flex flex-row" ref={editorAreaRef}>
+              {/* Left: Code editor */}
+              <div className="overflow-hidden" style={{ width: isVisualizerOpen ? `${visualizerSplit}%` : "100%", minWidth: isVisualizerOpen ? 250 : undefined, transition: isDraggingVisualizer ? "none" : "width 0.15s" }}>
+                {activeContent.readOnly ? (
+                  <ConvertedCodeViewer
+                    code={activeContent.code}
+                    language={activeContent.language}
+                    isLoading={
+                      (activeTabId.endsWith(".algo.py") && isConverting) ||
+                      (activeTabId.endsWith(".teal") && isCompiling)
+                    }
+                  />
+                ) : (
+                  <SolidityEditor
+                    value={activeContent.code}
+                    onChange={(newCode) => {
+                      if (!activeTabId.endsWith(".sol")) return;
+                      setFiles(prev => prev.map(f =>
+                        f.id === activeTabId ? { ...f, content: newCode } : f
+                      ));
+                    }}
+                    readOnly={isConverting}
+                    onCursorChange={handleCursorChange}
+                  />
+                )}
+              </div>
+
+              {/* Draggable divider + Visualizer pane */}
+              {isVisualizerOpen && (
+                <>
+                  <div
+                    className={`viz-divider${isDraggingVisualizer ? " active" : ""}`}
+                    onMouseDown={(e) => { e.preventDefault(); setIsDraggingVisualizer(true); }}
+                  />
+                  <div style={{ width: `${100 - visualizerSplit}%`, minWidth: 250, overflow: "hidden", height: "100%" }}>
+                    <MultiContractVisualizer
+                      multiAnalysis={multiContractAnalysis}
+                      singleAnalysis={contractAnalysis}
+                      isLoading={isAnalyzing}
+                      deployedContracts={deployedContracts}
+                      onJumpToLine={(line) => {
+                        setActiveTabId("converted.algo.py");
+                      }}
+                    />
+                  </div>
+                </>
+              )}
             </div>
 
             {/* AST Viewer (collapsible, below editor, above terminal) */}
-            {enrichedAST && activeTabId === "contract.sol" && (
+            {enrichedAST && activeTabId.endsWith(".sol") && (
               <ASTViewer enrichedAST={enrichedAST} />
             )}
           </div>

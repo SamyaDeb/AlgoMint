@@ -51,6 +51,32 @@
   /* Transitions */
   --transition-fast: 150ms ease;
   --transition-normal: 200ms ease;
+
+  /* ── Visualizer palette ── */
+  /* Method node types */
+  --viz-create: #10B981;
+  --viz-readonly: #3B82F6;
+  --viz-abimethod: #00D4AA;
+  --viz-baremethod: #6B7280;
+  --viz-subroutine: #8B5CF6;
+
+  /* State variable storage types */
+  --viz-global: #22C55E;
+  --viz-local: #3B82F6;
+  --viz-box: #F59E0B;
+  --viz-boxmap: #EAB308;
+
+  /* Edge / arrow colours */
+  --viz-edge-call: #94A3B8;
+  --viz-edge-read: #60A5FA;
+  --viz-edge-write: #F97316;
+  --viz-edge-itxn: #A855F7;
+
+  /* Security */
+  --viz-safe: #22C55E;
+  --viz-warn: #F59E0B;
+  --viz-danger: #EF4444;
+  --viz-info: #3B82F6;
 }
 
 @theme inline {
@@ -524,5 +550,481 @@ body {
     width: 100vw;
     height: calc(100vh - 48px);
     z-index: 50;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Visualizer — React Flow overrides & component styles
+   ══════════════════════════════════════════════════════════════ */
+
+/* React Flow container */
+.react-flow__renderer {
+  background: var(--bg-editor) !important;
+}
+
+.react-flow__background {
+  background: var(--bg-editor) !important;
+}
+
+.react-flow__controls {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+}
+
+.react-flow__controls-button {
+  background: var(--bg-surface) !important;
+  border-bottom: 1px solid var(--border) !important;
+  fill: var(--text-secondary) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--bg-tab-hover) !important;
+  fill: var(--accent) !important;
+}
+
+.react-flow__attribution {
+  display: none !important;
+}
+
+/* ─── Method nodes — Solidity Visualizer flowchart style ─── */
+.viz-node {
+  border-radius: 0;
+  min-width: 200px;
+  max-width: 260px;
+  font-family: var(--font-sans);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .5), 0 0 1px rgba(255, 255, 255, .08);
+  transition: box-shadow 0.2s, transform 0.15s, opacity 0.2s;
+  cursor: pointer;
+  overflow: hidden;
+  position: relative;
+  border: 1.5px solid rgba(255, 255, 255, .1);
+}
+
+.viz-node:hover {
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .7), 0 0 40px rgba(0, 212, 170, .12);
+  transform: translateY(-3px);
+}
+
+.viz-node.dimmed {
+  opacity: 0.12 !important;
+  transform: none !important;
+  pointer-events: none;
+}
+
+/* Header bar — colored top strip */
+.viz-node__header {
+  padding: 6px 14px;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Body — dark section */
+.viz-node__body {
+  padding: 10px 14px 12px;
+  background: rgba(10, 10, 26, .85);
+}
+
+.viz-node__name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.3;
+  font-family: var(--font-mono);
+}
+
+.viz-node__meta {
+  font-size: 10px;
+  color: rgba(255, 255, 255, .5);
+  margin-top: 4px;
+  font-family: var(--font-mono);
+}
+
+.viz-node__badges {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 10px;
+}
+
+.viz-node__badges span {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.75;
+  color: #fff;
+}
+
+/* ── Create method — orange ── */
+.viz-node--create {
+  border-color: #F97316;
+}
+
+.viz-node--create .viz-node__header {
+  background: #F97316;
+  color: #fff;
+}
+
+.viz-node--create .viz-node__name {
+  color: #FDBA74;
+}
+
+/* ── Readonly/view — blue ── */
+.viz-node--readonly {
+  border-color: #3B82F6;
+}
+
+.viz-node--readonly .viz-node__header {
+  background: #3B82F6;
+  color: #fff;
+}
+
+.viz-node--readonly .viz-node__name {
+  color: #93C5FD;
+}
+
+/* ── ABI method — teal ── */
+.viz-node--abi {
+  border-color: #14B8A6;
+}
+
+.viz-node--abi .viz-node__header {
+  background: #14B8A6;
+  color: #fff;
+}
+
+.viz-node--abi .viz-node__name {
+  color: #5EEAD4;
+}
+
+/* ── Bare method — gray ── */
+.viz-node--bare {
+  border-color: #6B7280;
+}
+
+.viz-node--bare .viz-node__header {
+  background: #6B7280;
+  color: #fff;
+}
+
+.viz-node--bare .viz-node__name {
+  color: #D1D5DB;
+}
+
+/* ── Subroutine — purple, dashed border ── */
+.viz-node--sub {
+  border-color: #8B5CF6;
+  border-style: dashed;
+}
+
+.viz-node--sub .viz-node__header {
+  background: #8B5CF6;
+  color: #fff;
+}
+
+.viz-node--sub .viz-node__name {
+  color: #C4B5FD;
+}
+
+/* ─── State variable nodes — card style ─── */
+.viz-state-node {
+  border-radius: 0;
+  min-width: 160px;
+  max-width: 220px;
+  font-family: var(--font-mono);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, .45);
+  transition: box-shadow 0.2s, transform 0.15s, opacity 0.2s;
+  cursor: pointer;
+  overflow: hidden;
+  border: 1.5px solid rgba(255, 255, 255, .1);
+}
+
+.viz-state-node:hover {
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .65);
+  transform: translateY(-2px);
+}
+
+.viz-state-node.dimmed {
+  opacity: 0.12 !important;
+  transform: none !important;
+  pointer-events: none;
+}
+
+.viz-state-node__header {
+  padding: 5px 12px;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.viz-state-node__body {
+  padding: 8px 12px 10px;
+  background: rgba(10, 10, 26, .85);
+}
+
+.viz-state-node__name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.3;
+}
+
+.viz-state-node__type {
+  font-size: 10px;
+  color: rgba(255, 255, 255, .5);
+  margin-top: 2px;
+}
+
+/* ── GlobalState — green ── */
+.viz-state-node--GlobalState {
+  border-color: #22C55E;
+}
+
+.viz-state-node--GlobalState .viz-state-node__header {
+  background: #22C55E;
+  color: #fff;
+}
+
+.viz-state-node--GlobalState .viz-state-node__name {
+  color: #86EFAC;
+}
+
+/* ── LocalState — blue ── */
+.viz-state-node--LocalState {
+  border-color: #3B82F6;
+}
+
+.viz-state-node--LocalState .viz-state-node__header {
+  background: #3B82F6;
+  color: #fff;
+}
+
+.viz-state-node--LocalState .viz-state-node__name {
+  color: #93C5FD;
+}
+
+/* ── Box — red/coral ── */
+.viz-state-node--Box {
+  border-color: #EF4444;
+}
+
+.viz-state-node--Box .viz-state-node__header {
+  background: #EF4444;
+  color: #fff;
+}
+
+.viz-state-node--Box .viz-state-node__name {
+  color: #FCA5A5;
+}
+
+/* ── BoxMap — amber ── */
+.viz-state-node--BoxMap {
+  border-color: #F59E0B;
+}
+
+.viz-state-node--BoxMap .viz-state-node__header {
+  background: #F59E0B;
+  color: #fff;
+}
+
+.viz-state-node--BoxMap .viz-state-node__name {
+  color: #FDE68A;
+}
+
+/* ── Unknown — slate ── */
+.viz-state-node--Unknown {
+  border-color: #64748B;
+}
+
+.viz-state-node--Unknown .viz-state-node__header {
+  background: #64748B;
+  color: #fff;
+}
+
+.viz-state-node--Unknown .viz-state-node__name {
+  color: #CBD5E1;
+}
+
+/* Edge animation for write edges */
+@keyframes dashFlow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+.edge-animated {
+  animation: dashFlow 1s linear infinite;
+}
+
+/* Dimmed edges */
+.react-flow__edge-path {
+  transition: stroke 0.15s, stroke-width 0.15s, opacity 0.2s;
+}
+
+.react-flow__edge.dimmed .react-flow__edge-path {
+  opacity: 0.08 !important;
+}
+
+/* Glow effect on edges */
+.react-flow__edge-path {
+  filter: drop-shadow(0 0 3px rgba(255, 255, 255, .15));
+}
+
+/* Visualizer sections */
+.viz-section {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.viz-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* Legend */
+.viz-legend {
+  background: rgba(10, 10, 10, .92);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  max-width: 200px;
+  backdrop-filter: blur(8px);
+}
+
+/* Security cards */
+.viz-security-card {
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.viz-security-card--safe {
+  background: rgba(34, 197, 94, .1);
+  border-left: 3px solid var(--viz-safe);
+  color: #bbf7d0;
+}
+
+.viz-security-card--warning {
+  background: rgba(245, 158, 11, .1);
+  border-left: 3px solid var(--viz-warn);
+  color: #fde68a;
+}
+
+.viz-security-card--danger {
+  background: rgba(239, 68, 68, .1);
+  border-left: 3px solid var(--viz-danger);
+  color: #fca5a5;
+}
+
+.viz-security-card--info {
+  background: rgba(59, 130, 246, .1);
+  border-left: 3px solid var(--viz-info);
+  color: #bfdbfe;
+}
+
+/* Mapping table */
+.viz-mapping-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.viz-mapping-table th {
+  text-align: left;
+  padding: 6px 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.viz-mapping-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(51, 51, 51, .5);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* Storage-access matrix */
+.viz-matrix {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.viz-matrix th,
+.viz-matrix td {
+  padding: 4px 8px;
+  text-align: center;
+  border: 1px solid rgba(51, 51, 51, .5);
+}
+
+.viz-matrix th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.viz-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* Resize divider between editor & visualizer */
+.viz-divider {
+  width: 4px;
+  cursor: ew-resize;
+  background: transparent;
+  transition: background 0.15s;
+  flex-shrink: 0;
+  z-index: 5;
+}
+
+.viz-divider:hover,
+.viz-divider.active {
+  background: var(--accent);
+}
+
+/* Detail panel overlay */
+.viz-detail-panel {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 300px;
+  background: rgba(10, 10, 10, .96);
+  border-left: 1px solid var(--border);
+  z-index: 30;
+  overflow-y: auto;
+  padding: 16px;
+  backdrop-filter: blur(8px);
+  animation: slideInRight 0.15s ease;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
   }
 }

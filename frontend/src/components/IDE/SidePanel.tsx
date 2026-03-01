@@ -3,7 +3,7 @@
 import type { PanelId } from "./IconSidebar";
 import { FilePlus, FolderPlus, RefreshCw, Copy, Download, Eye, Check, ChevronDown, ChevronRight } from "lucide-react";
 import type { FileNode } from "@/app/page";
-import type { ARC32AppSpec, ARC4Method, DeployedContract, CompilationResult } from "@/types";
+import type { ARC32AppSpec, ARC4Method, DeployedContract, CompilationResult, ContractFileData, MultiContractAnalysis } from "@/types";
 import type { PeraWalletConnect } from "@perawallet/connect";
 import ContractInteraction from "@/components/Deploy/ContractInteraction";
 
@@ -17,6 +17,8 @@ interface SidePanelProps {
   onOpenFile: (file: FileNode) => void;
   onDeleteFile: (id: string) => void;
   solidityCode: string;
+  // Per-file contract data for status badges
+  contractFiles: Map<string, ContractFileData>;
   // Convert panel props
   onConvert: () => void;
   isConverting: boolean;
@@ -37,7 +39,7 @@ interface SidePanelProps {
   walletAddress: string | null;
   onConnectWallet: () => void;
   onDisconnectWallet: () => void;
-  onDeploy: () => void;
+  onDeploy: (createArgs?: Record<string, string>, foreignAppIds?: number[]) => void;
   isDeploying: boolean;
   deployStage: string;
   deployError: string | null;
@@ -45,8 +47,13 @@ interface SidePanelProps {
   explorerUrl: string;
   network: string;
   onNetworkChange: (network: string) => void;
+  // Compiled contract selection
+  compiledContracts: { id: string; name: string }[];
+  selectedDeployContract: string;
+  onSelectDeployContract: (id: string) => void;
   // ARC-32 & Deployed contracts (from REAL Puya compilation)
   arc32AppSpec: ARC32AppSpec | null;
+  multiContractAnalysis: MultiContractAnalysis | null;
   deployedContracts: DeployedContract[];
   approvalTeal: string;
   clearTeal: string;
@@ -129,12 +136,16 @@ function EditorPanel({
   onCreateFolder,
   onOpenFile,
   onDeleteFile,
+  contractFiles,
+  deployedContracts,
 }: {
   files: FileNode[];
   onCreateFile: () => void;
   onCreateFolder: () => void;
   onOpenFile: (file: FileNode) => void;
   onDeleteFile: (id: string) => void;
+  contractFiles: Map<string, ContractFileData>;
+  deployedContracts: DeployedContract[];
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; fileNodeId: string } | null>(null);
 
@@ -171,6 +182,22 @@ function EditorPanel({
                   {f.name.endsWith('.sol') ? 'S' : f.name.endsWith('.md') ? 'M↓' : '📄'}
                 </span>
                 <span style={{ color: "var(--text-primary)" }}>{f.name}</span>
+                {/* Phase 6: File Status Badges — priority: LIVE > TEAL > PY */}
+                {f.name.endsWith('.sol') && (() => {
+                  const isDeployed = deployedContracts?.some(dc => dc.contractName === f.name.replace('.sol', ''));
+                  if (isDeployed) return (
+                    <span className="ml-auto px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider" style={{ backgroundColor: 'rgba(34,197,94,0.15)', color: '#22c55e' }}>LIVE</span>
+                  );
+                  const cfData = contractFiles.get(f.name);
+                  if (!cfData) return null;
+                  if (cfData.isCompiled) return (
+                    <span className="ml-auto px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider" style={{ backgroundColor: 'rgba(234,179,8,0.15)', color: '#eab308' }}>TEAL</span>
+                  );
+                  if (cfData.isConverted) return (
+                    <span className="ml-auto px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider" style={{ backgroundColor: 'rgba(0,212,170,0.12)', color: 'var(--accent)' }}>PY</span>
+                  );
+                  return null;
+                })()}
               </>
             )}
           </div>
@@ -658,6 +685,7 @@ function DeployPanel({
   onNetworkChange,
   isCompiled,
   arc32AppSpec,
+  multiContractAnalysis,
   deployedContracts,
   approvalTeal,
   clearTeal,
@@ -665,12 +693,15 @@ function DeployPanel({
   arc56Json,
   peraWallet,
   onLog,
+  compiledContracts,
+  selectedDeployContract,
+  onSelectDeployContract,
 }: {
   isWalletConnected: boolean;
   walletAddress: string | null;
   onConnectWallet: () => void;
   onDisconnectWallet: () => void;
-  onDeploy: () => void;
+  onDeploy: (createArgs?: Record<string, string>, foreignAppIds?: number[]) => void;
   isDeploying: boolean;
   deployStage: string;
   deployError: string | null;
@@ -680,7 +711,11 @@ function DeployPanel({
   onNetworkChange: (network: string) => void;
   isCompiled: boolean;
   arc32AppSpec: ARC32AppSpec | null;
+  multiContractAnalysis: MultiContractAnalysis | null;
   deployedContracts: DeployedContract[];
+  compiledContracts: { id: string; name: string }[];
+  selectedDeployContract: string;
+  onSelectDeployContract: (id: string) => void;
   approvalTeal: string;
   clearTeal: string;
   compilationResult: CompilationResult | null;
@@ -694,6 +729,106 @@ function DeployPanel({
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedContract, setExpandedContract] = useState<number | null>(null);
+  const [createArgValues, setCreateArgValues] = useState<Record<string, string>>({});
+  const [foreignAppIdValues, setForeignAppIdValues] = useState<Record<string, string>>({});
+
+  // ── Detect create method args from ARC-32 hints ──
+  const getCreateMethodArgs = (): { methodName: string; args: { name: string; type: string }[] } | null => {
+    if (!arc32AppSpec) return null;
+
+    const allMethods = arc32AppSpec.contract?.methods ?? arc32AppSpec.methods ?? [];
+    const hints = arc32AppSpec.hints as Record<string, { call_config?: Record<string, string> }> | undefined;
+
+    if (hints) {
+      // PuyaPy ARC-32: hints keys are method signatures like "create(uint64)void"
+      for (const [sig, hint] of Object.entries(hints)) {
+        const cc = hint.call_config;
+        if (!cc) continue;
+        // Check if any action has CREATE
+        const isCreate = Object.values(cc).some(v => v === "CREATE" || v === "ALL");
+        if (isCreate) {
+          // Extract method name from signature
+          const methodName = sig.split("(")[0];
+          // Find the matching method in methods array
+          const method = allMethods.find(m => m.name === methodName);
+          if (method && method.args.length > 0) {
+            return { methodName: method.name, args: method.args.map(a => ({ name: a.name, type: a.type })) };
+          }
+        }
+      }
+    }
+
+    // Fallback: look for a method named "create" or "initialize" with args
+    for (const m of allMethods) {
+      if ((m.name === "create" || m.name === "initialize") && m.args.length > 0) {
+        return { methodName: m.name, args: m.args.map(a => ({ name: a.name, type: a.type })) };
+      }
+    }
+
+    return null;
+  };
+
+  const createMethodInfo = getCreateMethodArgs();
+  const hasCreateArgs = createMethodInfo !== null && createMethodInfo.args.length > 0;
+  const allCreateArgsFilled = hasCreateArgs
+    ? createMethodInfo.args.every(a => (createArgValues[a.name] ?? "").trim() !== "")
+    : true;
+
+  const updateCreateArg = (name: string, value: string) => {
+    setCreateArgValues(prev => ({ ...prev, [name]: value }));
+  };
+
+  // ── Detect cross-contract dependencies for the selected deploy target ──
+  const deployContractName = compiledContracts.find(c => c.id === selectedDeployContract)?.name || "";
+  const contractDependencies: { contractName: string; relationshipType: string }[] = [];
+  if (multiContractAnalysis && deployContractName) {
+    for (const edge of multiContractAnalysis.inter_contract_edges) {
+      if (edge.from_contract === deployContractName) {
+        // This contract depends on another
+        if (!contractDependencies.find(d => d.contractName === edge.to_contract)) {
+          contractDependencies.push({ contractName: edge.to_contract, relationshipType: edge.relationship_type });
+        }
+      }
+    }
+  }
+
+  // Check which dependencies are NOT already deployed
+  const unresolvedDeps = contractDependencies.filter(
+    dep => !deployedContracts.find(dc => dc.contractName === dep.contractName)
+  );
+  const resolvedDeps = contractDependencies.filter(
+    dep => deployedContracts.find(dc => dc.contractName === dep.contractName)
+  );
+
+  // Collect foreign app IDs: from resolved deps (auto) + manual input
+  const getForeignAppIds = (): number[] => {
+    const ids: number[] = [];
+    // Auto-include deployed dependency app IDs
+    for (const dep of resolvedDeps) {
+      const dc = deployedContracts.find(d => d.contractName === dep.contractName);
+      if (dc) {
+        const num = parseInt(dc.appId, 10);
+        if (!isNaN(num) && !ids.includes(num)) ids.push(num);
+      }
+    }
+    // Include manually entered app IDs for unresolved deps
+    for (const dep of unresolvedDeps) {
+      const val = foreignAppIdValues[dep.contractName]?.trim();
+      if (val) {
+        const num = parseInt(val, 10);
+        if (!isNaN(num) && !ids.includes(num)) ids.push(num);
+      }
+    }
+    return ids;
+  };
+
+  // All foreign app deps must be filled (either from deployed or manual input)
+  const allDependenciesFilled = contractDependencies.every(dep => {
+    const deployed = deployedContracts.find(dc => dc.contractName === dep.contractName);
+    if (deployed) return true;
+    const val = foreignAppIdValues[dep.contractName]?.trim();
+    return val !== undefined && val !== "";
+  });
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -760,8 +895,63 @@ ${methodLines}`;
 
   return (
     <div className="flex flex-col gap-3 p-3">
-      {/* Network selector */}
+      {/* Contract selector */}
       <div className="text-base font-medium" style={{ color: "var(--text-secondary)" }}>
+        CONTRACT
+      </div>
+      {compiledContracts.length === 0 ? (
+        <div
+          className="text-xs p-2 rounded"
+          style={{ backgroundColor: "var(--bg-surface)", color: "var(--text-muted)" }}
+        >
+          No compiled contracts yet. Compile a contract first.
+        </div>
+      ) : (
+        <select
+          value={selectedDeployContract}
+          onChange={(e) => onSelectDeployContract(e.target.value)}
+          className="w-full py-2 px-2.5 rounded text-sm font-medium cursor-pointer transition-all"
+          style={{
+            backgroundColor: "var(--bg-surface)",
+            color: "var(--text-primary)",
+            border: "1px solid var(--border)",
+            outline: "none",
+          }}
+        >
+          {compiledContracts.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* Deploy target indicator (Phase 7) */}
+      {selectedDeployContract && compilationResult && (
+        <div className="p-2 rounded text-xs" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+          <div className="flex items-center justify-between">
+            <span style={{ color: "var(--text-muted)" }}>Deploy Target</span>
+            <span className="font-semibold" style={{ color: "var(--accent)" }}>
+              {compilationResult.contractName || selectedDeployContract.replace(".sol", "")}
+            </span>
+          </div>
+          <div className="flex items-center justify-between mt-1">
+            <span style={{ color: "var(--text-muted)" }}>Approval TEAL</span>
+            <span className="font-mono" style={{ color: "var(--text-secondary)" }}>
+              {compilationResult.approvalProgramSize.toLocaleString()} B
+            </span>
+          </div>
+          <div className="flex items-center justify-between mt-0.5">
+            <span style={{ color: "var(--text-muted)" }}>ARC-4 Methods</span>
+            <span className="font-mono" style={{ color: "var(--text-secondary)" }}>
+              {arc32AppSpec?.methods?.length ?? 0}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Network selector */}
+      <div className="text-base font-medium mt-1" style={{ color: "var(--text-secondary)" }}>
         ENVIRONMENT
       </div>
       <div className="flex gap-1">
@@ -804,10 +994,199 @@ ${methodLines}`;
         </PanelButton>
       )}
 
+      {/* Create method parameters (Phase 4) */}
+      {hasCreateArgs && selectedDeployContract && (() => {
+        // Determine if any arg is an app reference (by type or name heuristic)
+        const REFERENCE_TYPES = new Set(["application", "account", "asset"]);
+        const isAppIdArg = (name: string, type?: string) => {
+          if (type && REFERENCE_TYPES.has(type)) return true;
+          const lower = name.toLowerCase();
+          return lower.includes("app_id") || lower.includes("app_") || lower.endsWith("_app") || lower.endsWith("_id");
+        };
+        const hasAppIdArgs = createMethodInfo.args.some(a => isAppIdArg(a.name, a.type));
+        const hasRegularArgs = createMethodInfo.args.some(a => !isAppIdArg(a.name, a.type));
+
+        // Smart placeholder based on param name & type
+        const getPlaceholder = (name: string, type: string) => {
+          if (REFERENCE_TYPES.has(type)) return `Enter ${type === "application" ? "App ID" : type === "asset" ? "Asset ID" : "address"} of referenced ${type}`;
+          const lower = name.toLowerCase();
+          if (isAppIdArg(lower)) return "Paste App ID from deployed contract";
+          if (lower.includes("supply") || lower.includes("total")) return "e.g. 1000000";
+          if (lower.includes("amount") || lower.includes("price") || lower.includes("limit") || lower.includes("fee")) return "e.g. 1000";
+          if (lower.includes("name") || lower.includes("symbol")) return "e.g. MyToken";
+          if (lower.includes("decimals")) return "e.g. 6";
+          if (type === "address") return "Enter Algorand address";
+          if (type === "bool") return "true or false";
+          if (type.startsWith("uint") || type.startsWith("int")) return "e.g. 1000000";
+          return `Enter ${type} value`;
+        };
+
+        // Smart hint based on param name & type
+        const getHint = (name: string, type?: string) => {
+          if (type && REFERENCE_TYPES.has(type)) return `← ${type === "application" ? "App ID" : type === "asset" ? "Asset ID" : "Address"} (reference type — will be included in transaction)`;
+          const lower = name.toLowerCase();
+          if (isAppIdArg(lower)) return "← App ID of another deployed contract";
+          if (lower.includes("supply")) return "← Initial token supply (pick any number)";
+          if (lower.includes("amount")) return "← Amount value (pick any number)";
+          if (lower.includes("price")) return "← Price value";
+          return null;
+        };
+
+        return (
+        <div className="flex flex-col gap-2">
+          <div className="text-base font-medium" style={{ color: "var(--text-secondary)" }}>
+            CREATE METHOD PARAMETERS
+          </div>
+          <div className="text-xs p-2 rounded" style={{ backgroundColor: "rgba(0,212,170,0.05)", color: "var(--text-muted)" }}>
+            {hasAppIdArgs && hasRegularArgs
+              ? "Fill in the values below. For app IDs, paste from a previously deployed contract. For other parameters, enter your desired values."
+              : hasAppIdArgs
+              ? "This contract depends on another contract. Paste the App ID from a previously deployed contract."
+              : "This contract needs initial configuration values. Enter the values below — they are set once at deployment and cannot be changed later."
+            }
+          </div>
+
+          {/* Previously deployed App IDs for quick reference (Phase 5) */}
+          {deployedContracts.length > 0 && (
+            <div className="p-2 rounded" style={{ backgroundColor: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+              <div className="text-xs font-semibold tracking-wider uppercase mb-1.5" style={{ color: "var(--text-secondary)" }}>
+                DEPLOYED APP IDs (click to copy)
+              </div>
+              <div className="flex flex-col gap-1">
+                {deployedContracts.map((dc, i) => (
+                  <div
+                    key={`ref-${dc.txid}-${i}`}
+                    onClick={() => handleCopy(dc.appId, `ref-appid-${i}`)}
+                    className="flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-[rgba(0,212,170,0.08)] transition-colors"
+                    style={{ backgroundColor: "var(--bg-terminal)" }}
+                  >
+                    <span className="text-xs" style={{ color: "var(--text-primary)" }}>
+                      {dc.contractName || "Contract"}
+                    </span>
+                    <span className="flex items-center gap-1.5 text-xs font-mono" style={{ color: "var(--accent)" }}>
+                      {dc.appId}
+                      {copiedId === `ref-appid-${i}` ? (
+                        <Check size={10} style={{ color: "var(--success)" }} />
+                      ) : (
+                        <Copy size={10} style={{ color: "var(--text-muted)" }} />
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Input fields for each create arg */}
+          {createMethodInfo.args.map((arg) => {
+            const hint = getHint(arg.name, arg.type);
+            const appIdStyle = isAppIdArg(arg.name, arg.type);
+            return (
+            <div key={arg.name} className="flex flex-col gap-1">
+              <label className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                {arg.name} <span className="font-mono" style={{ color: "var(--text-muted)" }}>({arg.type})</span>
+              </label>
+              <input
+                type="text"
+                value={createArgValues[arg.name] ?? ""}
+                onChange={(e) => updateCreateArg(arg.name, e.target.value)}
+                placeholder={getPlaceholder(arg.name, arg.type)}
+                className="w-full py-1.5 px-2.5 rounded text-sm font-mono transition-all"
+                style={{
+                  backgroundColor: "var(--bg-terminal)",
+                  color: "var(--text-primary)",
+                  border: appIdStyle ? "1px solid rgba(0,212,170,0.3)" : "1px solid var(--border)",
+                  outline: "none",
+                }}
+                onFocus={(e) => { e.target.style.borderColor = "var(--accent)"; }}
+                onBlur={(e) => { e.target.style.borderColor = appIdStyle ? "rgba(0,212,170,0.3)" : "var(--border)"; }}
+              />
+              {hint && (
+                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{hint}</span>
+              )}
+            </div>
+            );
+          })}
+        </div>
+        );
+      })()}
+
+      {/* Cross-contract dependency App IDs */}
+      {contractDependencies.length > 0 && selectedDeployContract && (
+        <div className="flex flex-col gap-2">
+          <div className="text-base font-medium" style={{ color: "var(--text-secondary)" }}>
+            REFERENCED CONTRACT APP IDs
+          </div>
+          <div className="text-xs p-2 rounded" style={{ backgroundColor: "rgba(249,115,22,0.08)", color: "var(--text-muted)", border: "1px solid rgba(249,115,22,0.15)" }}>
+            This contract references {contractDependencies.length === 1 ? "another contract" : `${contractDependencies.length} other contracts`}.
+            {unresolvedDeps.length > 0 
+              ? " Enter the App ID(s) of the deployed contract(s) below."
+              : " App IDs will be included automatically from your deployed contracts."}
+          </div>
+
+          {contractDependencies.map((dep) => {
+            const deployed = deployedContracts.find(dc => dc.contractName === dep.contractName);
+            return (
+              <div key={`dep-${dep.contractName}`} className="flex flex-col gap-1">
+                <label className="text-xs font-medium flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
+                  {dep.contractName}
+                  <span className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
+                    ({dep.relationshipType})
+                  </span>
+                  {deployed && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(34,197,94,.15)", color: "#22C55E" }}>
+                      ✓ Deployed
+                    </span>
+                  )}
+                </label>
+                {deployed ? (
+                  <div
+                    className="flex items-center justify-between px-2.5 py-1.5 rounded cursor-pointer"
+                    style={{ backgroundColor: "rgba(34,197,94,.06)", border: "1px solid rgba(34,197,94,.2)" }}
+                    onClick={() => handleCopy(deployed.appId, `dep-${dep.contractName}`)}
+                  >
+                    <span className="text-xs font-mono" style={{ color: "#22C55E" }}>
+                      App ID: {deployed.appId}
+                    </span>
+                    {copiedId === `dep-${dep.contractName}` ? (
+                      <Check size={10} style={{ color: "var(--success)" }} />
+                    ) : (
+                      <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Auto-included</span>
+                    )}
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    value={foreignAppIdValues[dep.contractName] ?? ""}
+                    onChange={(e) => setForeignAppIdValues(prev => ({ ...prev, [dep.contractName]: e.target.value }))}
+                    placeholder={`Enter ${dep.contractName} App ID`}
+                    className="w-full py-1.5 px-2.5 rounded text-sm font-mono transition-all"
+                    style={{
+                      backgroundColor: "var(--bg-terminal)",
+                      color: "var(--text-primary)",
+                      border: "1px solid rgba(249,115,22,0.3)",
+                      outline: "none",
+                    }}
+                    onFocus={(e) => { e.target.style.borderColor = "#F97316"; }}
+                    onBlur={(e) => { e.target.style.borderColor = "rgba(249,115,22,0.3)"; }}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Deploy button */}
       <PanelButton
-        onClick={onDeploy}
-        disabled={!isCompiled || !isWalletConnected || isDeploying}
+        onClick={() => {
+          const foreignIds = contractDependencies.length > 0 ? getForeignAppIds() : undefined;
+          onDeploy(
+            hasCreateArgs ? createArgValues : undefined,
+            foreignIds && foreignIds.length > 0 ? foreignIds : undefined
+          );
+        }}
+        disabled={compiledContracts.length === 0 || !selectedDeployContract || !isWalletConnected || isDeploying || !allCreateArgsFilled || !allDependenciesFilled}
         loading={isDeploying}
       >
         Deploy to {network === "testnet" ? "Testnet" : "Mainnet"} ▶
@@ -1057,6 +1436,7 @@ function SettingsPanel({ network }: { network: string }) {
     { keys: `${mod} + Enter`, desc: "Next action" },
     { keys: `${mod} + \``, desc: "Toggle terminal" },
     { keys: `${mod} + Shift + C`, desc: "Copy code" },
+    { keys: `${mod} + Shift + V`, desc: "Toggle visualizer" },
   ];
 
   return (
@@ -1185,6 +1565,8 @@ export default function SidePanel(props: SidePanelProps) {
                 onCreateFolder={props.onCreateFolder}
                 onOpenFile={props.onOpenFile}
                 onDeleteFile={props.onDeleteFile}
+                contractFiles={props.contractFiles}
+                deployedContracts={props.deployedContracts}
               />
             )}
             {activePanel === "convert" && (
@@ -1231,6 +1613,7 @@ export default function SidePanel(props: SidePanelProps) {
                 onNetworkChange={props.onNetworkChange}
                 isCompiled={props.isCompiled}
                 arc32AppSpec={props.arc32AppSpec}
+                multiContractAnalysis={props.multiContractAnalysis}
                 deployedContracts={props.deployedContracts}
                 approvalTeal={props.approvalTeal}
                 clearTeal={props.clearTeal}
@@ -1238,6 +1621,9 @@ export default function SidePanel(props: SidePanelProps) {
                 arc56Json={props.arc56Json}
                 peraWallet={props.peraWallet}
                 onLog={props.onLog}
+                compiledContracts={props.compiledContracts}
+                selectedDeployContract={props.selectedDeployContract}
+                onSelectDeployContract={props.onSelectDeployContract}
               />
             )}
             {activePanel === "settings" && (

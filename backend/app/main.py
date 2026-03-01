@@ -17,6 +17,7 @@ from app.middleware.error_handler import setup_error_handlers
 from app.middleware.input_size_limiter import InputSizeLimitMiddleware
 from app.middleware.rate_limiter import setup_rate_limiter
 from app.middleware.request_logger import RequestLoggerMiddleware
+from app.routes.analyze import router as analyze_router
 from app.routes.chat import router as chat_router
 from app.routes.compile import router as compile_router
 from app.routes.convert import router as convert_router
@@ -116,6 +117,7 @@ app.include_router(convert_router, prefix="/api/v1")
 app.include_router(compile_router, prefix="/api/v1")
 app.include_router(deploy_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
+app.include_router(analyze_router, prefix="/api/v1")
 
 
 # ── Health Check ──────────────────────────────────────────────

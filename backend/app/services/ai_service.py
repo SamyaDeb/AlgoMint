@@ -69,18 +69,27 @@ comprehensions, NO dict/set/list at runtime. Python int literals and bool
 are allowed where algopy accepts `UInt64 | int`.
 
 ════════════════════════════════════════════════════════════════
- SECTION 2: BARE CREATE METHOD (EVERY CONTRACT MUST HAVE THIS)
+ SECTION 2: CREATE METHOD (EVERY CONTRACT MUST HAVE THIS)
 ════════════════════════════════════════════════════════════════
 
-Every contract MUST have a bare create so the app can be deployed with zero args:
+A) If the Solidity constructor takes NO parameters, use a bare create:
 
     @arc4.baremethod(allow_actions=["NoOp"], create="require")
     def create(self) -> None:
         self.owner = Txn.sender
 
-NEVER use `@arc4.abimethod(create="require")` as deploy sends zero args.
-If the Solidity constructor takes parameters, move them to a separate
-`@arc4.abimethod` called `initialize(...)` to be invoked post-deploy.
+B) If the Solidity constructor takes parameters (e.g. address of another
+   contract, initial values), use an ABI create method instead:
+
+    @arc4.abimethod(create="require")
+    def create(self, other_app_id: arc4.UInt64) -> None:
+        self.other_app_id = other_app_id.native
+
+   This is especially important for multi-contract systems where the
+   dependent contract needs another contract's App ID at deploy time.
+   Do NOT split constructor params into a separate `initialize(...)` call;
+   always use `@arc4.abimethod(create="require")` so parameters are
+   passed during the creation transaction itself.
 
 ⚠ NAMING: Method names MUST NOT collide with __init__ attribute names.
   If self.owner exists, do NOT create def owner(self). Use def get_owner(self) instead.
@@ -403,6 +412,45 @@ Transfer ASA:
 
 Application call:
     itxn.ApplicationCall(app_id=target_app, app_args=(Bytes(b"method"),), fee=0).submit()
+
+Reading return values from inner application calls:
+    ⚠ ApplicationCall result has NO .output attribute.
+    After .submit(), use op.ITxn.last_log() to read the return value.
+    result = itxn.ApplicationCall(app_id=target_app, app_args=(arc4.arc4_signature("getValue()uint64"),), fee=0).submit()
+    raw_return = op.ITxn.last_log()            # → Bytes (raw ABI-encoded return)
+    # ARC-4 ABI returns are prefixed with 4-byte return prefix 0x151f7c75
+    return_value = arc4.UInt64.from_log(raw_return)  # strips prefix + decodes
+
+    ⚠ NEVER use: result.output, result.return_value, result.logs, result.last_log
+      These do NOT exist on inner transaction result objects.
+    ⚠ Use arc4.<Type>.from_log(op.ITxn.last_log()) for typed decoding.
+    ⚠ Use op.ITxn.last_log() for raw bytes.
+
+Cross-Contract Deployment Pattern (Multi-Contract Systems):
+    When the Solidity contract references another contract's address or interacts with
+    an external contract, convert it so the dependent contract accepts the other
+    contract's App ID as a create-time parameter stored in GlobalState:
+
+    class DependentContract(ARC4Contract):
+        def __init__(self) -> None:
+            self.other_app_id = UInt64(0)
+
+        @arc4.abimethod(create="require")
+        def create(self, other_app_id: arc4.UInt64) -> None:
+            self.other_app_id = other_app_id.native
+
+        @arc4.abimethod
+        def call_other(self) -> None:
+            itxn.ApplicationCall(
+                app_id=Application(self.other_app_id),
+                app_args=(arc4.arc4_signature("someMethod()void"),),
+                fee=0,
+            ).submit()
+
+    ⚠ If Solidity has `constructor(address _otherContract)`, convert to a `create` method
+      with `arc4.UInt64` parameter for the app ID (not an address).
+    ⚠ Store the dependency App ID in GlobalState so it persists across calls.
+    ⚠ Use `Application(self.other_app_id)` when making inner application calls.
 
 ════════════════════════════════════════════════════════════════
  SECTION 10: SUBROUTINES & CONTROL FLOW
@@ -856,6 +904,18 @@ Apply ONLY the minimum changes needed. Keep the contract logic the same.
 22. "Returning Any from function declared to return 'UInt64'"
     WHY: BoxMap.get() return type isn't always inferred.
     FIX: Assign to typed variable: result: UInt64 = self.bm.get(key, default=UInt64(0)); return result
+
+23. "ApplicationCall has no attribute 'output'" or "'return_value'" or "'logs'" or "'last_log'"
+    WHY: Inner transaction result objects do NOT have .output, .return_value, .logs, or .last_log.
+         To read return data from an inner app call, use op.ITxn.last_log() AFTER .submit().
+    FIX:
+      WRONG:  result = itxn.ApplicationCall(...).submit(); val = result.output
+      WRONG:  result.return_value, result.logs, result.last_log
+      RIGHT:  itxn.ApplicationCall(...).submit()
+              raw = op.ITxn.last_log()             # Bytes
+              val = arc4.UInt64.from_log(raw)       # typed decode (strips ARC-4 prefix)
+      For other return types use the matching arc4 type:
+              arc4.String.from_log(raw), arc4.Bool.from_log(raw), etc.
 
 Keep the @arc4.baremethod(allow_actions=["NoOp"], create="require") for the create method.
 Respond with the FULL corrected code in JSON format (same schema as conversion).
