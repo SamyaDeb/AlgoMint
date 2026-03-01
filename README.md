@@ -1,5 +1,8 @@
 # AlgoMint
 
+![2026-03-01 14 18 52](https://github.com/user-attachments/assets/b3767a28-68d7-41a9-b2db-b1af8d1b545e)
+
+
 **AI-Powered Solidity → Algorand Python Converter & Deployer**
 
 > ![Compilation Success Rate](https://img.shields.io/badge/Compilation%20Success%20Rate-48%2F50%20contracts%20(96%25)-brightgreen)
