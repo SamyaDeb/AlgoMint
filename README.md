@@ -9,7 +9,7 @@
 > ![Algorand](https://img.shields.io/badge/Algorand-Testnet%20%26%20Mainnet-blue)
 > ![Stack](https://img.shields.io/badge/Stack-Next.js%20%2B%20FastAPI%20%2B%20PuyaPy-blueviolet)
 
-A VS Code-style web IDE that converts Ethereum Solidity smart contracts into production-ready **Algorand Python (algopy)** using Google Gemini AI, compiles them via **PuyaPy** to TEAL bytecode, and deploys to Algorand Testnet or Mainnet via **Pera Wallet** — all in one seamless flow.
+A VS Code style web IDE that converts Ethereum Solidity smart contracts into production-ready **Algorand Python (algopy)** using Google Gemini AI, compiles them via **PuyaPy** to TEAL bytecode, and deploys to Algorand Testnet or Mainnet via **Pera Wallet** — all in one seamless flow.
 
 ## 96% Compilation Success Rate
 
